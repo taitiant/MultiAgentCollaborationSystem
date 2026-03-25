@@ -1,0 +1,30 @@
+x-build-args: &macs-build-args
+  PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.11-slim}
+  PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+  PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+
+services:
+  macs:
+    build:
+      context: .
+      args: *macs-build-args
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./workspace:/app/workspace
+      - ./data:/app/data
+      - ./config:/app/config
+    environment:
+      - PYTHONPATH=/app
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - CODEX_API_KEY=${CODEX_API_KEY:-}
+    restart: unless-stopped
+  nginx:
+    image: ${NGINX_IMAGE:-docker.m.daocloud.io/library/nginx:1.25-alpine}
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - macs

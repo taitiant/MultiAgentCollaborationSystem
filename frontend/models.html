@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>模型管理 - MACS</title>
+  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+    .model-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .model-sidebar {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .sidebar-head {
+      padding: 18px;
+      border-bottom: 1px solid #e3edf6;
+    }
+
+    .sidebar-list {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      max-height: min(72vh, 960px);
+      overflow: auto;
+    }
+
+    .provider-item {
+      width: 100%;
+      display: block;
+      min-height: 0;
+      border: 1px solid #dfeaf4;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 12px;
+      text-align: left;
+      color: #19324e;
+      cursor: pointer;
+      box-shadow: none;
+    }
+
+    .provider-item.active {
+      border-color: #2f7df6;
+      box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.12);
+      background: #f7fbff;
+    }
+
+    .provider-item:hover {
+      transform: none;
+      filter: none;
+      box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.08);
+    }
+
+    .provider-item .name {
+      font-weight: 700;
+    }
+
+    .provider-item .meta {
+      margin-top: 6px;
+      color: #607286;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .model-main {
+      display: grid;
+      gap: 18px;
+    }
+
+    .subsection {
+      border: 1px solid #e3edf6;
+      border-radius: 18px;
+      background: rgba(250, 252, 255, 0.92);
+      padding: 16px;
+    }
+
+    .section-title {
+      margin: 0 0 6px;
+      color: #17304d;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .kpi-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .model-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .model-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid #e4edf5;
+      background: rgba(255, 255, 255, 0.96);
+    }
+
+    .model-row .meta {
+      margin-top: 6px;
+      color: #607286;
+      font-size: 12px;
+    }
+
+    .discover-list {
+      margin-top: 12px;
+      border: 1px solid #e4edf5;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.96);
+      overflow: hidden;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+
+    .discover-item {
+      width: 100%;
+      display: block;
+      min-height: 0;
+      text-align: left;
+      border: none;
+      border-bottom: 1px solid #eef3f8;
+      padding: 10px 12px;
+      background: transparent;
+      color: #19314c;
+      font-weight: 500;
+      box-shadow: none;
+    }
+
+    .discover-item:last-child {
+      border-bottom: none;
+    }
+
+    .discover-item.active,
+    .discover-item:hover {
+      transform: none;
+      filter: none;
+      background: #f5f9ff;
+    }
+
+    .binding-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .empty {
+      padding: 34px 20px;
+      border-radius: 18px;
+      border: 1px dashed #d1e1ef;
+      background: rgba(247, 250, 254, 0.94);
+      color: #607286;
+      text-align: center;
+    }
+
+    .test-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid #e1ebf5;
+      background: rgba(255, 255, 255, 0.96);
+      color: #607286;
+    }
+
+    .test-status.success {
+      border-color: #b7e4c7;
+      background: #eefbf3;
+      color: #216e39;
+    }
+
+    .test-status.error {
+      border-color: #ffd0cb;
+      background: #fff4f3;
+      color: #be2d1f;
+    }
+
+    .test-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: 0.8;
+    }
+
+    @media (max-width: 1180px) {
+      .model-layout,
+      .detail-grid,
+      .binding-grid,
+      .kpi-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .model-row {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .model-row > div:first-child {
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body class="app-page" data-page="models">
+  <div class="app-shell">
+    <aside class="app-sidebar" data-shell-sidebar></aside>
+    <main class="app-main">
+      <header class="page-header">
+        <div class="page-heading">
+          <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
+          <div>
+            <h1>模型管理</h1>
+            <p class="page-subtitle">凭据、模型、阶段绑定。</p>
+          </div>
+        </div>
+        <div class="page-actions">
+          <a class="button-link secondary" href="/tasks.html">进入任务中心</a>
+          <a class="button-link" href="/capabilities.html">能力设置</a>
+        </div>
+      </header>
+
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">凭据数</div>
+          <div class="kpi-value" id="kpiCredentials">0</div>
+          <div class="kpi-meta">服务入口</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">模型数</div>
+          <div class="kpi-value" id="kpiModels">0</div>
+          <div class="kpi-meta">全部模型</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">已绑定阶段</div>
+          <div class="kpi-value" id="kpiBindings">0</div>
+          <div class="kpi-meta">默认阶段</div>
+        </div>
+      </section>
+
+      <section class="model-layout">
+        <section class="card model-sidebar">
+          <div class="sidebar-head">
+            <div class="section-title" style="font-size: 16px;">服务凭据</div>
+            <div class="actions">
+              <button type="button" onclick="startCreateCredential()">添加凭据</button>
+            </div>
+          </div>
+          <div id="credentialList" class="sidebar-list"></div>
+        </section>
+
+        <div class="model-main">
+          <section id="credentialCreateCard" class="card" style="display:none;">
+            <div class="section-head">
+              <div>
+                <h2>添加凭据</h2>
+                <p>填写基础信息。</p>
+              </div>
+            </div>
+            <div class="detail-grid">
+              <div>
+                <label>名称</label>
+                <input id="credName" placeholder="如 codex-for-me / OpenAI / Gemini" />
+              </div>
+              <div>
+                <label>Base URL</label>
+                <input id="credBaseUrl" placeholder="如 https://api-vip.codex-for.me/v1" />
+              </div>
+            </div>
+            <label>API Key</label>
+            <input id="credApiKey" placeholder="直接填 API Key" />
+            <div class="actions">
+              <button type="button" onclick="saveCredential()">保存凭据</button>
+              <button type="button" class="secondary" onclick="cancelCreateCredential()">取消</button>
+              <button type="button" class="ghost" onclick="fillCodexPreset()">填充 Codex 示例</button>
+            </div>
+          </section>
+
+          <section id="credentialDetail" class="card empty">请先从左侧选择一个凭据，或新建一个凭据。</section>
+
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>阶段绑定</h2>
+                <p>设置默认模型。</p>
+              </div>
+            </div>
+            <div id="bindingsForm" class="binding-grid"></div>
+            <div class="actions">
+              <button type="button" onclick="saveBindings()">保存阶段绑定</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app-shell.js"></script>
+  <script>
+    let overview = { credentials: [], models: [], stage_bindings: {}, stages: [] };
+    let selectedCredentialId = null;
+    let discoveredModels = [];
+    let selectedDiscoveredModel = '';
+    let lastTestResult = { kind: 'idle', title: '尚未测试', data: null };
+
+    function currentCredential() {
+      return (overview.credentials || []).find(item => item.credential_id === selectedCredentialId) || null;
+    }
+
+    function modelsForCredential(credentialId) {
+      return (overview.models || []).filter(item => item.credential_id === credentialId);
+    }
+
+    async function fetchOverview() {
+      overview = await (await fetch('/ai-registry/overview')).json();
+      return overview;
+    }
+
+    function updateKpis() {
+      document.getElementById('kpiCredentials').textContent = String((overview.credentials || []).length);
+      document.getElementById('kpiModels').textContent = String((overview.models || []).length);
+      document.getElementById('kpiBindings').textContent = String(Object.values(overview.stage_bindings || {}).filter(Boolean).length);
+    }
+
+    function renderCredentialList() {
+      const box = document.getElementById('credentialList');
+      const items = overview.credentials || [];
+      if (!items.length) {
+        box.innerHTML = '<div class="empty">还没有凭据，先添加一个即可开始。</div>';
+        return;
+      }
+      box.innerHTML = items.map(item => `
+        <button type="button" class="provider-item ${selectedCredentialId === item.credential_id ? 'active' : ''}" onclick="selectCredential('${item.credential_id}')">
+          <div class="name">${item.name}</div>
+          <div class="meta">${item.base_url || ''}</div>
+          <div class="meta">${item.api_key_hint || '未显示 Key'}</div>
+        </button>
+      `).join('');
+    }
+
+    function renderBindings() {
+      const modelOptions = ['<option value="">未绑定</option>'].concat((overview.models || []).filter(m => m.model_kind === 'llm').map(m => `<option value="${m.model_id}">${m.name} (${m.credential_name || 'Credential'})</option>`));
+      document.getElementById('bindingsForm').innerHTML = (overview.stages || []).map(stage => {
+        const current = (overview.stage_bindings || {})[stage] || '';
+        return `
+          <div class="subsection">
+            <label>${stage}</label>
+            <select data-stage="${stage}">${modelOptions.map(opt => opt.includes(`value="${current}"`) ? opt.replace('>', ' selected>') : opt).join('')}</select>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function startCreateCredential() {
+      document.getElementById('credentialCreateCard').style.display = 'block';
+      document.getElementById('credentialDetail').style.display = 'none';
+      selectedCredentialId = null;
+      renderCredentialList();
+    }
+
+    function cancelCreateCredential() {
+      document.getElementById('credentialCreateCard').style.display = 'none';
+      document.getElementById('credentialDetail').style.display = 'block';
+      renderCredentialDetail();
+    }
+
+    function fillCodexPreset() {
+      document.getElementById('credName').value = 'codex-for-me';
+      document.getElementById('credBaseUrl').value = 'https://api-vip.codex-for.me/v1';
+    }
+
+    async function saveCredential() {
+      const body = {
+        name: document.getElementById('credName').value.trim(),
+        base_url: document.getElementById('credBaseUrl').value.trim(),
+        api_key: document.getElementById('credApiKey').value.trim(),
+      };
+      const resp = await fetch('/ai-registry/credentials', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+      const data = await resp.json();
+      if (!resp.ok) return alert(data.detail || '保存失败');
+      document.getElementById('credName').value = '';
+      document.getElementById('credBaseUrl').value = '';
+      document.getElementById('credApiKey').value = '';
+      document.getElementById('credentialCreateCard').style.display = 'none';
+      await refreshAll();
+      selectedCredentialId = data.credential_id;
+      renderCredentialList();
+      renderCredentialDetail();
+    }
+
+    function selectCredential(id) {
+      selectedCredentialId = id;
+      document.getElementById('credentialCreateCard').style.display = 'none';
+      document.getElementById('credentialDetail').style.display = 'block';
+      discoveredModels = [];
+      selectedDiscoveredModel = '';
+      renderCredentialList();
+      renderCredentialDetail();
+    }
+
+    function setTestResult(kind, title, data) {
+      lastTestResult = { kind, title, data };
+      const output = document.getElementById('credentialTestOutput');
+      const badge = document.getElementById('credentialTestBadge');
+      if (badge) {
+        badge.className = `test-status ${kind}`;
+        badge.innerHTML = `<span class="test-dot"></span><div>${title}</div>`;
+      }
+      if (output) output.textContent = data ? JSON.stringify(data, null, 2) : '尚未测试';
+    }
+
+    async function testSelectedCredential() {
+      if (!selectedCredentialId) return;
+      setTestResult('idle', '正在测试凭据连接...', { status: 'running' });
+      const resp = await fetch(`/ai-registry/credentials/${selectedCredentialId}/test`, { method:'POST' });
+      const data = await resp.json();
+      const ok = !!(resp.ok && data.ok !== false);
+      setTestResult(ok ? 'success' : 'error', ok ? '凭据连接正常' : '凭据连接失败', data);
+      if (!resp.ok) alert(data.detail || '测试失败');
+    }
+
+    async function discoverSelectedCredentialModels() {
+      if (!selectedCredentialId) return;
+      const resp = await fetch(`/ai-registry/credentials/${selectedCredentialId}/discover-models`, { method:'POST' });
+      const data = await resp.json();
+      setTestResult(resp.ok && data.ok !== false ? 'success' : 'error', resp.ok && data.ok !== false ? '模型列表拉取成功' : '模型列表拉取失败', data);
+      discoveredModels = data.models || [];
+      if (!selectedDiscoveredModel && discoveredModels.length) selectedDiscoveredModel = discoveredModels[0].name;
+      renderCredentialDetail();
+    }
+
+    async function addModelForSelectedCredential() {
+      if (!selectedCredentialId) return;
+      const manual = document.getElementById('manualModelName')?.value.trim() || '';
+      const modelName = manual || selectedDiscoveredModel;
+      if (!modelName) return alert('请先填写模型名或从发现列表中选择一个模型');
+      const body = { name: modelName };
+      const resp = await fetch(`/ai-registry/credentials/${selectedCredentialId}/models`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+      const data = await resp.json();
+      if (!resp.ok) return alert(data.detail || '添加模型失败');
+      selectedDiscoveredModel = modelName;
+      if (document.getElementById('manualModelName')) document.getElementById('manualModelName').value = '';
+      await refreshAll();
+      renderCredentialDetail();
+    }
+
+    async function deleteCredential(id) {
+      if (!confirm('删除该凭据？删除前请先移除其下模型。')) return;
+      const resp = await fetch(`/ai-registry/credentials/${id}`, { method:'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) return alert(data.detail || '删除失败');
+      if (selectedCredentialId === id) selectedCredentialId = null;
+      await refreshAll();
+      renderCredentialDetail();
+    }
+
+    async function deleteModel(id) {
+      if (!confirm('删除该模型？')) return;
+      const resp = await fetch(`/ai-registry/models/${id}`, { method:'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) return alert(data.detail || '删除失败');
+      await refreshAll();
+      renderCredentialDetail();
+    }
+
+    async function testModel(id, name) {
+      const prompt = window.prompt(`测试模型 ${name}\n请输入测试提示词：`, 'ping');
+      if (prompt === null) return;
+      const resp = await fetch(`/ai-registry/models/${id}/test`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ prompt: prompt.trim() || 'ping' })
+      });
+      const data = await resp.json();
+      const ok = !!(resp.ok && !(String(data.output || '').startsWith('[') && String(data.output || '').includes('error')));
+      setTestResult(ok ? 'success' : 'error', ok ? `模型测试成功：${name}` : `模型测试失败：${name}`, data);
+      if (!resp.ok) alert(data.detail || '模型测试失败');
+    }
+
+    function renderCredentialDetail() {
+      const box = document.getElementById('credentialDetail');
+      const cred = currentCredential();
+      if (!cred) {
+        box.className = 'card empty';
+        box.innerHTML = '请先从左侧选择一个凭据，或新建一个凭据。';
+        return;
+      }
+      const models = modelsForCredential(cred.credential_id);
+      box.className = 'card';
+      box.innerHTML = `
+        <div class="section-head">
+          <div>
+            <h2>${cred.name}</h2>
+            <p>${cred.base_url}</p>
+          </div>
+          <div class="actions" style="margin-top:0;">
+            <button type="button" class="ghost" onclick="testSelectedCredential()">测试连接</button>
+            <button type="button" class="ghost" onclick="discoverSelectedCredentialModels()">拉取模型列表</button>
+            <button type="button" class="danger" onclick="deleteCredential('${cred.credential_id}')">删除凭据</button>
+          </div>
+        </div>
+
+        <div class="detail-grid" style="margin-top:14px;">
+          <div class="subsection">
+            <div class="section-title" style="font-size:16px;">为该凭据添加模型</div>
+            <div class="muted">优先点击“拉取模型列表”选择；如果接口不支持，也可以手动填写模型名，例如 gpt-5.4。</div>
+            <label>模型名</label>
+            <input id="manualModelName" placeholder="例如 gpt-5.4 / qwen-plus / gemini-flash-latest" value="${selectedDiscoveredModel || ''}" />
+            ${discoveredModels.length ? `
+              <div class="discover-list">${discoveredModels.map(item => `<button type="button" class="discover-item ${selectedDiscoveredModel === item.name ? 'active' : ''}" onclick="selectDiscoveredModel('${item.name.replace(/'/g, "\\'")}')">${item.name}</button>`).join('')}</div>
+            ` : '<div class="muted" style="margin-top:10px;">还没有发现到模型列表，可以直接手填模型名。</div>'}
+            <div class="actions">
+              <button type="button" onclick="addModelForSelectedCredential()">添加模型</button>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <div class="section-title" style="font-size:16px;">连接反馈</div>
+            <div id="credentialTestBadge" class="test-status ${lastTestResult.kind}"><span class="test-dot"></span><div>${lastTestResult.title}</div></div>
+            <pre id="credentialTestOutput" style="margin-top:12px;">${lastTestResult.data ? JSON.stringify(lastTestResult.data, null, 2) : "尚未测试"}</pre>
+          </div>
+        </div>
+
+        <div class="subsection" style="margin-top:14px;">
+          <div class="section-title" style="font-size:16px;">该凭据下的模型</div>
+          <div class="model-list">
+            ${models.length ? models.map(model => `
+              <div class="model-row">
+                <div>
+                  <div><strong>${model.name}</strong></div>
+                  <div class="meta">${model.provider_type} · ${model.model_kind} · registry:model:${model.model_id}</div>
+                </div>
+                <div class="actions" style="margin-top:0;">
+                  <button type="button" class="ghost" onclick="testModel('${model.model_id}','${model.name.replace(/'/g, "\\'")}')">测试模型</button>
+                  <button type="button" class="danger" onclick="deleteModel('${model.model_id}')">删除</button>
+                </div>
+              </div>
+            `).join('') : '<div class="empty">该凭据下还没有模型。</div>'}
+          </div>
+        </div>
+      `;
+    }
+
+    function selectDiscoveredModel(name) {
+      selectedDiscoveredModel = name;
+      const input = document.getElementById('manualModelName');
+      if (input) input.value = name;
+      renderCredentialDetail();
+    }
+
+    async function saveBindings() {
+      const bindings = {};
+      document.querySelectorAll('#bindingsForm [data-stage]').forEach(el => { bindings[el.dataset.stage] = el.value || null; });
+      const resp = await fetch('/ai-registry/stage-bindings', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ bindings }) });
+      const data = await resp.json();
+      if (!resp.ok) return alert(data.detail || '保存失败');
+      await refreshAll();
+    }
+
+    async function refreshAll() {
+      await fetchOverview();
+      updateKpis();
+      renderCredentialList();
+      renderBindings();
+      renderCredentialDetail();
+    }
+
+    refreshAll();
+  </script>
+</body>
+</html>

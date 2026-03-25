@@ -1,0 +1,47 @@
+{
+  "id": "software_dev",
+  "name": "软件开发参考流程",
+  "stages": [
+    {
+      "name": "requirements",
+      "label": "需求分析",
+      "capabilities": [
+        "analysis.requirements:v1"
+      ],
+      "human_checkpoint": false
+    },
+    {
+      "name": "architecture",
+      "label": "架构设计",
+      "capabilities": [
+        "design.arch:v1"
+      ],
+      "human_checkpoint": false
+    },
+    {
+      "name": "coding",
+      "label": "编码",
+      "capabilities": [
+        "code.edit:v1"
+      ],
+      "human_checkpoint": false
+    },
+    {
+      "name": "testing",
+      "label": "测试",
+      "capabilities": [
+        "test.run:v1"
+      ],
+      "human_checkpoint": false
+    },
+    {
+      "name": "docs",
+      "label": "文档",
+      "capabilities": [
+        "doc.write:v1"
+      ],
+      "human_checkpoint": false
+    }
+  ],
+  "reference_only": true
+}

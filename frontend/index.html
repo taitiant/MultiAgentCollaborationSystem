@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>主页 - MACS</title>
+  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 1.08fr) minmax(300px, 0.92fr);
+      gap: 18px;
+    }
+
+    .binding-list,
+    .task-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .binding-item,
+    .task-item {
+      padding: 14px 15px;
+      border-radius: 16px;
+      border: 1px solid #e1ebf4;
+      background: rgba(255, 255, 255, 0.92);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .binding-item::before,
+    .task-item::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: linear-gradient(180deg, #2f7df6, #0f9d74);
+    }
+
+    .binding-item strong,
+    .task-item strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #17304c;
+      font-size: 14px;
+    }
+
+    .binding-item span,
+    .task-item span {
+      color: #5a6c80;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .task-item-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .task-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .task-item:hover,
+    .binding-item:hover {
+      box-shadow: 0 14px 28px rgba(20, 48, 78, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .task-actions a,
+    .task-actions button {
+      min-height: 34px;
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    .quick-form-result {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px dashed #cfe0f1;
+      background: rgba(244, 249, 255, 0.9);
+      color: #4e6277;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .inline-field {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .task-item-top > div:first-child {
+      min-width: 0;
+    }
+
+    .soft-note {
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid #dbe7f3;
+      background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(246,250,254,.92));
+      color: #526579;
+      line-height: 1.65;
+    }
+
+    @media (max-width: 1180px) {
+      .dashboard-grid,
+      .inline-field {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .task-item-top {
+        flex-direction: column;
+      }
+
+      .task-actions {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body class="app-page" data-page="home">
+  <div class="app-shell">
+    <aside class="app-sidebar" data-shell-sidebar></aside>
+    <main class="app-main">
+      <header class="page-header">
+        <div class="page-heading">
+          <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
+          <div>
+            <h1>主页</h1>
+            <p class="page-subtitle">总览与快捷入口。</p>
+          </div>
+        </div>
+        <div class="page-actions">
+          <a class="button-link" href="/models.html">管理模型</a>
+          <a class="button-link secondary" href="/tasks.html">任务中心</a>
+        </div>
+      </header>
+
+      <section id="setupBanner" class="callout">
+        <div>
+          <strong>尚未配置可用的 LLM 模型</strong>
+          <div>任务创建和执行都依赖已注册模型。建议先到模型管理页添加凭据、录入模型，并至少完成一个阶段绑定。</div>
+        </div>
+        <a class="button-link" href="/models.html">前往模型管理</a>
+      </section>
+
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">模型数</div>
+          <div class="kpi-value" id="kpiModels">0</div>
+          <div class="kpi-meta">已注册模型</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">任务总数</div>
+          <div class="kpi-value" id="kpiTasks">0</div>
+          <div class="kpi-meta">全部任务</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">进行中 / 等待中</div>
+          <div class="kpi-value" id="kpiActive">0</div>
+          <div class="kpi-meta">未完成任务</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">已完成任务</div>
+          <div class="kpi-value" id="kpiDone">0</div>
+          <div class="kpi-meta">已完成</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">能力配置</div>
+          <div class="kpi-value" id="kpiCapabilities">0</div>
+          <div class="kpi-meta">已填写项</div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>快速创建任务</h2>
+              <p>输入需求后可直接进入详情页继续处理。</p>
+            </div>
+          </div>
+          <label for="spec">任务描述</label>
+          <textarea id="spec" placeholder="例如：整理当前前端布局，拆分页面并增加左侧导航。"></textarea>
+          <div class="inline-field">
+            <div>
+              <label for="caps">能力需求</label>
+              <input id="caps" value="code.edit:v1" />
+            </div>
+            <div class="soft-note">
+              默认会带上 `code.edit:v1`。
+              适合快速抛一个任务，再去详情页看工作流和模型对话。
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" onclick="createTask()">创建并打开详情</button>
+          </div>
+          <div id="createResult" class="quick-form-result">尚未创建新任务。</div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>阶段绑定概览</h2>
+              <p>当前默认模型。</p>
+            </div>
+          </div>
+          <div id="bindingList" class="binding-list"></div>
+        </section>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>近期任务</h2>
+            <p>最近 3 条，方便继续处理。</p>
+          </div>
+          <a class="button-link ghost" href="/tasks.html">查看全部任务</a>
+        </div>
+        <div id="recentTasks" class="task-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app-shell.js?v=20260324a"></script>
+  <script>
+    let tasks = [];
+    let overview = { credentials: [], models: [], stage_bindings: {}, stages: [] };
+    let capabilityState = { vector_model: '', rerank_model: '', notes: '' };
+
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function getStatusClass(status) {
+      if (!status) return 'status-created';
+      return `status-${String(status).replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    }
+
+    function hasRegisteredLlm() {
+      return (overview.models || []).some((item) => (item.model_kind || 'llm') === 'llm');
+    }
+
+    function renderSetupBanner() {
+      const banner = document.getElementById('setupBanner');
+      banner.classList.toggle('show', !hasRegisteredLlm());
+    }
+
+    function renderKpis() {
+      const total = tasks.length;
+      const active = tasks.filter((item) => ['created', 'running', 'waiting_user', 'aborting'].includes(item.status)).length;
+      const done = tasks.filter((item) => item.status === 'completed').length;
+      const capabilityCount = [capabilityState.vector_model, capabilityState.rerank_model, capabilityState.notes].filter(Boolean).length;
+      document.getElementById('kpiModels').textContent = String((overview.models || []).length);
+      document.getElementById('kpiTasks').textContent = String(total);
+      document.getElementById('kpiActive').textContent = String(active);
+      document.getElementById('kpiDone').textContent = String(done);
+      document.getElementById('kpiCapabilities').textContent = String(capabilityCount);
+    }
+
+    function renderBindings() {
+      const box = document.getElementById('bindingList');
+      const stages = overview.stages || [];
+      if (!stages.length) {
+        box.innerHTML = '<div class="empty-state">暂无阶段绑定信息。</div>';
+        return;
+      }
+      box.innerHTML = stages.map((stage) => {
+        const modelId = (overview.stage_bindings || {})[stage];
+        const model = (overview.models || []).find((item) => item.model_id === modelId);
+        return `
+          <div class="binding-item">
+            <strong>${escapeHtml(stage)}</strong>
+            <span>${model ? `${escapeHtml(model.name)} · ${escapeHtml(model.provider_type || 'provider')}` : '尚未绑定模型'}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderRecentTasks() {
+      const box = document.getElementById('recentTasks');
+      if (!tasks.length) {
+        box.innerHTML = '<div class="empty-state">还没有任务。完成模型配置后，可以直接在这个首页快速创建一个。</div>';
+        return;
+      }
+      box.innerHTML = tasks.slice(0, 3).map((task) => `
+        <div class="task-item">
+          <div class="task-item-top">
+            <div>
+              <strong>${escapeHtml(task.context?.spec || '未填写需求')}</strong>
+              <span>${escapeHtml(task.task_id)}</span>
+            </div>
+            <span class="status-badge ${getStatusClass(task.status)}">${escapeHtml(task.status || 'unknown')}</span>
+          </div>
+          <span>能力：${escapeHtml((task.required_capabilities || []).join(', ') || '-')}</span>
+          <div class="task-actions">
+            <a class="button-link ghost" href="/task.html?task_id=${encodeURIComponent(task.task_id)}">打开详情</a>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function fetchAll() {
+      const [tasksResp, overviewResp, capabilityResp] = await Promise.all([
+        fetch('/tasks'),
+        fetch('/ai-registry/overview'),
+        fetch('/capabilities'),
+      ]);
+      tasks = await tasksResp.json();
+      overview = await overviewResp.json();
+      capabilityState = await capabilityResp.json();
+    }
+
+    async function refreshDashboard() {
+      await fetchAll();
+      renderSetupBanner();
+      renderKpis();
+      renderBindings();
+      renderRecentTasks();
+    }
+
+    async function createTask() {
+      const spec = document.getElementById('spec').value.trim();
+      const caps = document.getElementById('caps').value.split(',').map((item) => item.trim()).filter(Boolean);
+      const result = document.getElementById('createResult');
+      if (!spec) {
+        result.textContent = '请先填写任务描述。';
+        return;
+      }
+      const resp = await fetch('/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: { spec }, required_capabilities: caps }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        result.textContent = data.detail || '任务创建失败。';
+        return;
+      }
+      result.innerHTML = `已创建任务 <strong>${escapeHtml(data.task_id)}</strong>，准备跳转到详情页。`;
+      await refreshDashboard();
+      window.location.href = `/task.html?task_id=${encodeURIComponent(data.task_id)}`;
+    }
+
+    refreshDashboard();
+    setInterval(refreshDashboard, 8000);
+  </script>
+</body>
+</html>

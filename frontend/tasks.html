@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>任务中心 - MACS</title>
+  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+    .toolbar-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 18px;
+    }
+
+    .mini-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .mini-kpi {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid #dfeaf3;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 252, 0.94));
+    }
+
+    .mini-kpi .label {
+      color: #637589;
+      font-size: 12px;
+    }
+
+    .mini-kpi .value {
+      margin-top: 8px;
+      color: #16304c;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .task-table td:first-child {
+      min-width: 180px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .task-table tr:hover td {
+      background: #f8fbff;
+    }
+
+    .task-table tr.selected-row td {
+      background: #eef5ff;
+    }
+
+    .task-spec {
+      max-width: min(100%, 42ch);
+      color: #506376;
+      line-height: 1.55;
+    }
+
+    .table-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 0;
+    }
+
+    .task-table td:last-child {
+      min-width: 180px;
+    }
+
+    .selection-box {
+      display: grid;
+      gap: 14px;
+    }
+
+    .selection-meta {
+      display: grid;
+      gap: 8px;
+    }
+
+    .selection-meta strong {
+      font-size: 18px;
+      color: #132c48;
+    }
+
+    .selection-meta p {
+      margin: 0;
+      color: #596c80;
+      line-height: 1.65;
+      font-size: 13px;
+    }
+
+    .selection-highlight {
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid #dce7f4;
+      background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(244,248,252,.94));
+      color: #506376;
+      line-height: 1.6;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .stage-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .stage-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #eef2f7;
+      color: #56697b;
+    }
+
+    .stage-pill.running {
+      background: #fff2d8;
+      color: #a16600;
+    }
+
+    .stage-pill.done {
+      background: #e8f7ee;
+      color: #2b8a3e;
+    }
+
+    .stage-pill.rework,
+    .stage-pill.error {
+      background: #ffe7e5;
+      color: #c03426;
+    }
+
+    .stage-pill.waiting {
+      background: #eee7ff;
+      color: #6d42df;
+    }
+
+    .hint-box {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(244, 249, 255, 0.94);
+      border: 1px dashed #ccdeef;
+      color: #5a6d81;
+      line-height: 1.6;
+      font-size: 13px;
+    }
+
+    .control-input {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    @media (max-width: 1180px) {
+      .toolbar-grid,
+      .mini-kpi-grid,
+      .control-input,
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .task-spec {
+        max-width: none;
+      }
+
+      .control-input > * {
+        width: 100%;
+      }
+
+      .task-table td:first-child {
+        min-width: 0;
+        font-size: 11px;
+      }
+
+      .table-actions > * {
+        flex: 1 1 calc(50% - 4px);
+      }
+    }
+  </style>
+</head>
+<body class="app-page" data-page="tasks">
+  <div class="app-shell">
+    <aside class="app-sidebar" data-shell-sidebar></aside>
+    <main class="app-main">
+      <header class="page-header">
+        <div class="page-heading">
+          <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
+          <div>
+            <h1>任务中心</h1>
+            <p class="page-subtitle">任务列表与执行。</p>
+          </div>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="secondary" onclick="refreshPage()">刷新全部</button>
+          <a class="button-link" href="/">返回主页</a>
+        </div>
+      </header>
+
+      <section id="setupBanner" class="callout">
+        <div>
+          <strong>当前还没有可用模型</strong>
+          <div>任务中心不再回退到 MockAdapter。请先完成模型注册与阶段绑定，再回来创建或执行任务。</div>
+        </div>
+        <a class="button-link" href="/models.html">去模型管理</a>
+      </section>
+
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">任务总数</div>
+          <div class="kpi-value" id="kpiTasks">0</div>
+          <div class="kpi-meta">当前记录在系统中的全部任务</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">执行中</div>
+          <div class="kpi-value" id="kpiRunning">0</div>
+          <div class="kpi-meta">状态为 `created`、`running` 或 `aborting` 的任务</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">等待人工介入</div>
+          <div class="kpi-value" id="kpiWaiting">0</div>
+          <div class="kpi-meta">状态为 `waiting_user` 的任务</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">已完成</div>
+          <div class="kpi-value" id="kpiDone">0</div>
+          <div class="kpi-meta">状态为 `completed` 的任务</div>
+        </div>
+      </section>
+
+      <section class="toolbar-grid">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>创建任务</h2>
+              <p>新建任务。</p>
+            </div>
+          </div>
+          <label for="spec">任务描述</label>
+          <textarea id="spec" placeholder="例如：将前端布局拆分成主页、任务中心、任务详情和模型管理几个页面。"></textarea>
+          <label for="caps">能力需求</label>
+          <input id="caps" value="code.edit:v1" />
+          <div class="actions">
+            <button type="button" onclick="createTask()">创建任务</button>
+            <button type="button" class="secondary" onclick="document.getElementById('spec').value = ''">清空描述</button>
+          </div>
+          <div id="createResult" class="hint-box">尚未创建新任务。</div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>执行控制</h2>
+              <p>执行当前任务。</p>
+            </div>
+          </div>
+          <div class="control-input">
+            <div>
+              <label for="stepTaskId">task_id</label>
+              <input id="stepTaskId" placeholder="从下方任务列表选中" />
+            </div>
+            <div class="actions" style="margin-top: 0;">
+              <button id="runBtn" type="button" onclick="runStep()">执行 Step</button>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" class="secondary" onclick="abortCurrentTask()">中止任务</button>
+            <button type="button" class="ghost" onclick="openTaskDetail()">打开详情页</button>
+            <button type="button" class="ghost" onclick="loadSelectedTaskContext()">刷新当前任务</button>
+          </div>
+          <div id="runHint" class="hint-box">还没有开始执行。</div>
+          <label style="margin-top: 16px;">最近一次执行返回</label>
+          <pre id="stepResult">{}</pre>
+        </section>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>任务列表</h2>
+            <p>选择任务。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="task-table responsive-table" id="tasksTable"></table>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>当前选中任务</h2>
+            <p>简要状态。</p>
+          </div>
+        </div>
+        <div id="taskSummary" class="selection-box"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app-shell.js?v=20260324a"></script>
+  <script src="/workflow_shared.js?v=20260324a"></script>
+  <script>
+    const DEFAULT_STAGES = window.MacsWorkflow.DEFAULT_STAGES;
+    const EVENT_LABELS = {
+      TaskCreated: '任务创建',
+      PlanGenerated: '计划生成',
+      StageStart: '阶段开始',
+      StageProgress: '阶段进度',
+      StageDone: '阶段完成',
+      StageReview: '阶段评审',
+      StageRework: '阶段返工',
+      StageAbort: '阶段已中止',
+      StageAwait: '等待人工介入',
+      StageError: '阶段失败',
+      GraphRun: '流程执行完成',
+      GraphAbort: '流程已中止',
+      GraphError: '流程执行异常',
+      TaskEventConfigUpdated: '事件配置更新',
+      StageRerunDone: '阶段重跑完成',
+      StageRerunError: '阶段重跑失败',
+      StageRerunFailed: '阶段重跑未通过',
+      StageRerunAborted: '阶段重跑已中止',
+    };
+
+    let tasks = [];
+    let selectedTaskId = '';
+    let selectedTask = null;
+    let selectedTaskEvents = [];
+    let stageDefinitions = [];
+    let allProviders = [];
+    let isExecuting = false;
+    let livePollTimer = null;
+
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function asISO(ts) {
+      const value = Number(ts || 0);
+      if (!value) return '—';
+      const formatted = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        hour12: false,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }).format(new Date(value * 1000));
+      return `${formatted} (Asia/Shanghai)`;
+    }
+
+    function getStatusClass(status) {
+      if (!status) return 'status-created';
+      return `status-${String(status).replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    }
+
+    function hasAvailableProviders() {
+      return Array.isArray(allProviders) && allProviders.some((provider) => (provider.model_kind || 'llm') === 'llm');
+    }
+
+    function renderSetupBanner() {
+      document.getElementById('setupBanner').classList.toggle('show', !hasAvailableProviders());
+    }
+
+    function renderKpis() {
+      const total = tasks.length;
+      const running = tasks.filter((task) => ['created', 'running', 'aborting'].includes(task.status)).length;
+      const waiting = tasks.filter((task) => task.status === 'waiting_user').length;
+      const done = tasks.filter((task) => task.status === 'completed').length;
+      document.getElementById('kpiTasks').textContent = String(total);
+      document.getElementById('kpiRunning').textContent = String(running);
+      document.getElementById('kpiWaiting').textContent = String(waiting);
+      document.getElementById('kpiDone').textContent = String(done);
+    }
+
+    function renderTaskTable() {
+      const table = document.getElementById('tasksTable');
+      if (!tasks.length) {
+        table.innerHTML = '<tbody><tr><td colspan="5"><div class="empty-state">还没有任务。先创建一个任务，或者先去模型管理配置可用模型。</div></td></tr></tbody>';
+        return;
+      }
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>task_id</th>
+            <th>状态</th>
+            <th>需求</th>
+            <th>能力</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tasks.map((task) => `
+            <tr class="${selectedTaskId === task.task_id ? 'selected-row' : ''}">
+              <td data-label="task_id">${escapeHtml(task.task_id)}</td>
+              <td data-label="状态"><span class="status-badge ${getStatusClass(task.status)}">${escapeHtml(task.status || 'unknown')}</span></td>
+              <td data-label="需求"><div class="task-spec">${escapeHtml(task.context?.spec || '-')}</div></td>
+              <td data-label="能力">${escapeHtml((task.required_capabilities || []).join(', ') || '-')}</td>
+              <td data-label="操作">
+                <div class="table-actions">
+                  <button type="button" onclick="setTask('${task.task_id}')">${selectedTaskId === task.task_id ? '已选中' : '选中'}</button>
+                  <button type="button" class="ghost" onclick="openTaskDetail('${task.task_id}')">详情</button>
+                  <button type="button" class="danger" onclick="removeTask('${task.task_id}')">删除</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      `;
+    }
+
+    function renderTaskSummary() {
+      const box = document.getElementById('taskSummary');
+      if (!selectedTaskId || !selectedTask) {
+        box.innerHTML = '<div class="empty-state">从左侧列表选中一个任务后，这里会显示阶段进度、阻塞信息和快速入口。</div>';
+        return;
+      }
+      const stages = window.MacsWorkflow.normalizeStageDefinitions(stageDefinitions.length ? stageDefinitions : DEFAULT_STAGES);
+      const stageState = window.MacsWorkflow.summarizeStages({
+        stageDefinitions: stages,
+        events: selectedTaskEvents,
+        isExecuting,
+      });
+      const insights = window.MacsWorkflow.computeTaskInsights({
+        stageDefinitions: stages,
+        stageState,
+        events: selectedTaskEvents,
+        eventLabels: EVENT_LABELS,
+      });
+      const stageStrip = stages.map((stage) => {
+        const status = stageState[stage.name]?.status || 'pending';
+        return `<span class="stage-pill ${status}">${escapeHtml(stage.label)} · ${escapeHtml(status)}</span>`;
+      }).join('');
+      const nextAction = selectedTask.status === 'completed'
+        ? '任务已完成，可进入详情页查看最终输出。'
+        : (insights.runtimeWarning
+            ? `当前阶段执行偏慢：${insights.runtimeWarning}`
+            : (insights.blocker && insights.blocker !== '无阻塞'
+                ? `当前更适合先看详情页排查：${insights.blocker}`
+                : `下一步建议：继续执行 ${insights.runningStage || '首个阶段'}。`));
+
+      box.innerHTML = `
+        <div class="selection-meta">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <strong>${escapeHtml(selectedTask.context?.spec || '未填写需求')}</strong>
+            <span class="status-badge ${getStatusClass(selectedTask.status)}">${escapeHtml(selectedTask.status || 'unknown')}</span>
+          </div>
+          <p>task_id：${escapeHtml(selectedTask.task_id)}</p>
+          <p>能力需求：${escapeHtml((selectedTask.required_capabilities || []).join(', ') || '-')}</p>
+          <p>工作目录：${escapeHtml(selectedTask.workspace_path || '-')}</p>
+        </div>
+        <div class="selection-highlight">${escapeHtml(nextAction)}</div>
+        <div class="mini-kpi-grid">
+          <div class="mini-kpi"><div class="label">阶段完成数</div><div class="value">${escapeHtml(`${insights.doneCount}/${insights.stageCount}`)}</div></div>
+          <div class="mini-kpi"><div class="label">当前运行阶段</div><div class="value">${escapeHtml(insights.runningStage || '无')}</div><div class="label">${escapeHtml(insights.runningFile ? `当前文件：${insights.runningFile}` : (insights.runningDuration ? `运行时长：${insights.runningDuration}` : ''))}</div></div>
+          <div class="mini-kpi"><div class="label">返工次数</div><div class="value">${escapeHtml(String(insights.reworkCount || 0))}</div></div>
+          <div class="mini-kpi"><div class="label">最近进展</div><div class="value" style="font-size:15px;line-height:1.5;">${escapeHtml(insights.lastProgress || '暂无')}</div></div>
+        </div>
+        <div class="summary-grid">
+          <div>
+          <label style="margin-top:0;">阶段进度</label>
+          <div class="stage-strip">${stageStrip || '<span class="stage-pill">暂无阶段信息</span>'}</div>
+          </div>
+          <div class="hint-box" style="margin-top:0;">当前阻塞：${escapeHtml(insights.blocker || '无阻塞')}${insights.runtimeWarning ? `<br>执行健康：${escapeHtml(insights.runtimeWarning)}` : ''}</div>
+        </div>
+        <div class="actions">
+          <button type="button" onclick="runStep()">执行当前任务</button>
+          <button type="button" class="secondary" onclick="loadSelectedTaskContext()">刷新概览</button>
+          <a class="button-link ghost" href="/task.html?task_id=${encodeURIComponent(selectedTask.task_id)}">进入任务详情</a>
+        </div>
+      `;
+    }
+
+    async function loadProviders() {
+      const resp = await fetch('/models');
+      const data = await resp.json();
+      allProviders = data.providers || [];
+      renderSetupBanner();
+    }
+
+    async function loadTasks() {
+      const resp = await fetch('/tasks');
+      tasks = await resp.json();
+      renderKpis();
+      if (selectedTaskId && !tasks.some((task) => task.task_id === selectedTaskId)) {
+        selectedTaskId = '';
+        selectedTask = null;
+        selectedTaskEvents = [];
+        stageDefinitions = [];
+        document.getElementById('stepTaskId').value = '';
+      }
+      if (!selectedTaskId && tasks.length) {
+        selectedTaskId = tasks[0].task_id;
+        document.getElementById('stepTaskId').value = selectedTaskId;
+      }
+      renderTaskTable();
+    }
+
+    async function loadSelectedTaskContext() {
+      if (!selectedTaskId) {
+        selectedTask = null;
+        selectedTaskEvents = [];
+        stageDefinitions = [];
+        renderTaskSummary();
+        return;
+      }
+      selectedTask = tasks.find((task) => task.task_id === selectedTaskId) || null;
+      const [eventsResp, cfgResp] = await Promise.all([
+        fetch(`/events?task_id=${encodeURIComponent(selectedTaskId)}`),
+        fetch(`/tasks/${encodeURIComponent(selectedTaskId)}/event-configs`),
+      ]);
+      selectedTaskEvents = await eventsResp.json();
+      if (cfgResp.ok) {
+        const cfg = await cfgResp.json();
+        stageDefinitions = cfg.stage_definitions || [];
+      } else {
+        stageDefinitions = [];
+      }
+      renderTaskSummary();
+      if (isExecuting && selectedTask) {
+        const stages = stageDefinitions.length ? stageDefinitions : DEFAULT_STAGES;
+        const stageState = window.MacsWorkflow.summarizeStages({
+          stageDefinitions: stages,
+          events: selectedTaskEvents,
+          isExecuting,
+        });
+        const insights = window.MacsWorkflow.computeTaskInsights({
+          stageDefinitions: stages,
+          stageState,
+          events: selectedTaskEvents,
+          eventLabels: EVENT_LABELS,
+        });
+        const parts = [`任务 ${selectedTask.task_id} 执行中`];
+        if (insights.runningStage && insights.runningStage !== '无') parts.push(insights.runningStage);
+        if (insights.runningFile) parts.push(`当前 ${insights.runningFile}${insights.runningProgress ? ` (${insights.runningProgress})` : ''}`);
+        if (insights.runtimeWarning) parts.push(insights.runtimeWarning);
+        else if (insights.runningDuration) parts.push(`已运行 ${insights.runningDuration}`);
+        document.getElementById('runHint').textContent = parts.join(' · ');
+      }
+      renderTaskTable();
+    }
+
+    function setTask(taskId) {
+      selectedTaskId = taskId;
+      document.getElementById('stepTaskId').value = taskId;
+      loadSelectedTaskContext();
+    }
+
+    async function createTask() {
+      const spec = document.getElementById('spec').value.trim();
+      const caps = document.getElementById('caps').value.split(',').map((item) => item.trim()).filter(Boolean);
+      const result = document.getElementById('createResult');
+      if (!spec) {
+        result.textContent = '请先填写任务描述。';
+        return;
+      }
+      const resp = await fetch('/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: { spec }, required_capabilities: caps }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        result.textContent = data.detail || '任务创建失败。';
+        return;
+      }
+      result.innerHTML = `已创建任务 <strong>${escapeHtml(data.task_id)}</strong>。你可以继续在这里执行，也可以直接进入详情页。`;
+      await loadTasks();
+      setTask(data.task_id);
+      document.getElementById('spec').value = '';
+    }
+
+    async function runStep() {
+      const id = document.getElementById('stepTaskId').value.trim() || selectedTaskId;
+      if (!id) return;
+      if (!hasAvailableProviders()) {
+        alert('请先配置可用模型后再执行任务。');
+        return;
+      }
+      selectedTaskId = id;
+      document.getElementById('stepTaskId').value = id;
+      isExecuting = true;
+      document.getElementById('runBtn').disabled = true;
+      document.getElementById('runHint').textContent = `任务 ${id} 正在执行，请稍候...`;
+      if (livePollTimer) clearInterval(livePollTimer);
+      livePollTimer = setInterval(loadSelectedTaskContext, 700);
+      try {
+        const resp = await fetch(`/tasks/${encodeURIComponent(id)}/step`, { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        document.getElementById('stepResult').textContent = JSON.stringify(data, null, 2);
+        if (!resp.ok) {
+          const msg = data.detail || data.error || `执行失败（HTTP ${resp.status}）`;
+          document.getElementById('runHint').textContent = msg;
+          alert(msg);
+        } else {
+          document.getElementById('runHint').textContent = `任务 ${id} 执行完成。`;
+        }
+      } finally {
+        isExecuting = false;
+        document.getElementById('runBtn').disabled = false;
+        if (livePollTimer) {
+          clearInterval(livePollTimer);
+          livePollTimer = null;
+        }
+        await loadTasks();
+        await loadSelectedTaskContext();
+      }
+    }
+
+    async function abortCurrentTask() {
+      const id = document.getElementById('stepTaskId').value.trim() || selectedTaskId;
+      if (!id) return;
+      const resp = await fetch(`/tasks/${encodeURIComponent(id)}/abort`, { method: 'POST' });
+      const data = await resp.json();
+      document.getElementById('stepResult').textContent = JSON.stringify(data, null, 2);
+      if (!resp.ok) {
+        alert(data.detail || '中止失败');
+        return;
+      }
+      document.getElementById('runHint').textContent = `任务 ${id} 已请求中止。`;
+      isExecuting = false;
+      document.getElementById('runBtn').disabled = false;
+      if (livePollTimer) {
+        clearInterval(livePollTimer);
+        livePollTimer = null;
+      }
+      await loadTasks();
+      await loadSelectedTaskContext();
+    }
+
+    async function removeTask(taskId) {
+      if (!confirm(`确认删除任务 ${taskId} 吗？这会删除任务记录和事件。`)) return;
+      const resp = await fetch(`/tasks/${encodeURIComponent(taskId)}?purge_workspace=true`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert(data.detail || '删除失败');
+        return;
+      }
+      if (selectedTaskId === taskId) {
+        selectedTaskId = '';
+      }
+      await loadTasks();
+      await loadSelectedTaskContext();
+    }
+
+    function openTaskDetail(taskIdParam) {
+      const id = taskIdParam || document.getElementById('stepTaskId').value.trim() || selectedTaskId;
+      if (!id) return;
+      window.location.href = `/task.html?task_id=${encodeURIComponent(id)}`;
+    }
+
+    async function refreshPage() {
+      await loadProviders();
+      await loadTasks();
+      await loadSelectedTaskContext();
+    }
+
+    refreshPage();
+    setInterval(loadTasks, 5000);
+    setInterval(() => {
+      if (!isExecuting && selectedTaskId) loadSelectedTaskContext();
+    }, 2500);
+  </script>
+</body>
+</html>

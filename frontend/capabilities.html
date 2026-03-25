@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>能力设置 - MACS</title>
+  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+    .cap-grid {
+      display: grid;
+      grid-template-columns: minmax(300px, 1.05fr) minmax(280px, 0.95fr);
+      gap: 18px;
+    }
+
+    .model-hint-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .model-hint {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid #e2ecf5;
+      background: rgba(255, 255, 255, 0.94);
+    }
+
+    .model-hint strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #16304c;
+    }
+
+    .model-hint span {
+      color: #607286;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .field-note {
+      margin-top: 8px;
+      color: #607286;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 1180px) {
+      .cap-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .model-hint span {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body class="app-page" data-page="capabilities">
+  <div class="app-shell">
+    <aside class="app-sidebar" data-shell-sidebar></aside>
+    <main class="app-main">
+      <header class="page-header">
+        <div class="page-heading">
+          <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
+          <div>
+            <h1>能力设置</h1>
+            <p class="page-subtitle">能力相关模型配置。</p>
+          </div>
+        </div>
+        <div class="page-actions">
+          <a class="button-link secondary" href="/models.html">去模型管理</a>
+          <a class="button-link" href="/tasks.html">去任务中心</a>
+        </div>
+      </header>
+
+      <section class="cap-grid">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>知识库模型配置</h2>
+              <p>选择或填写模型。</p>
+            </div>
+          </div>
+
+          <label for="vectorModelSelect">向量模型</label>
+          <select id="vectorModelSelect"></select>
+          <div class="field-note">优先显示向量模型。</div>
+
+          <label for="vectorModel">向量模型手动输入</label>
+          <input id="vectorModel" placeholder="如 qwen3-embedding / registry:model:xxx / 其他 provider ID" />
+
+          <label for="rerankModelSelect">重排序模型</label>
+          <select id="rerankModelSelect"></select>
+          <div class="field-note">可选已注册模型，也可手填。</div>
+
+          <label for="rerankModel">重排序模型手动输入</label>
+          <input id="rerankModel" placeholder="如 bge-reranker / openai-main / 其他 provider ID" />
+
+          <label for="capNotes">备注</label>
+          <textarea id="capNotes" placeholder="记录当前能力模型的用途、注意事项或切换策略。"></textarea>
+
+          <div class="actions">
+            <button type="button" onclick="saveCaps()">保存配置</button>
+            <button type="button" class="secondary" onclick="loadAll()">重新加载</button>
+          </div>
+        </section>
+
+        <div class="stack">
+          <section class="card">
+            <div class="section-head">
+            <div>
+              <h2>可选模型参考</h2>
+              <p>已注册模型。</p>
+            </div>
+          </div>
+            <div id="modelHints" class="model-hint-list"></div>
+          </section>
+
+          <section class="card">
+            <div class="section-head">
+            <div>
+              <h2>当前配置快照</h2>
+              <p>当前值。</p>
+            </div>
+          </div>
+            <pre id="capInfo">{}</pre>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app-shell.js"></script>
+  <script>
+    let capabilityState = { vector_model: '', rerank_model: '', notes: '' };
+    let overview = { models: [] };
+
+    function optionLabel(model) {
+      return `${model.name} (${model.credential_name || model.provider_type || 'registry'})`;
+    }
+
+    function setSelectOptions(selectId, preferredKind) {
+      const select = document.getElementById(selectId);
+      const preferred = (overview.models || []).filter((item) => (item.model_kind || '') === preferredKind);
+      const others = (overview.models || []).filter((item) => (item.model_kind || '') !== preferredKind);
+      const options = preferred.concat(others);
+      select.innerHTML = ['<option value="">不使用已注册模型</option>'].concat(options.map((model) => `<option value="${model.model_id}">${optionLabel(model)}</option>`)).join('');
+    }
+
+    function syncField(selectId, inputId, value) {
+      const select = document.getElementById(selectId);
+      const input = document.getElementById(inputId);
+      const inRegistry = Array.from(select.options).some((option) => option.value === value);
+      select.value = inRegistry ? value : '';
+      input.value = inRegistry ? '' : (value || '');
+    }
+
+    function resolveFieldValue(selectId, inputId) {
+      return document.getElementById(inputId).value.trim() || document.getElementById(selectId).value.trim();
+    }
+
+    function renderHints() {
+      const box = document.getElementById('modelHints');
+      const models = overview.models || [];
+      if (!models.length) {
+        box.innerHTML = '<div class="empty-state">还没有已注册模型。建议先去模型管理页完成凭据和模型录入。</div>';
+        return;
+      }
+      box.innerHTML = models.slice(0, 8).map((model) => `
+        <div class="model-hint">
+          <strong>${model.name}</strong>
+          <span>model_id: ${model.model_id}</span>
+          <span>类型: ${model.model_kind || 'unknown'} · provider: ${model.provider_type || 'unknown'}</span>
+        </div>
+      `).join('');
+    }
+
+    async function loadCaps() {
+      capabilityState = await (await fetch('/capabilities')).json();
+      syncField('vectorModelSelect', 'vectorModel', capabilityState.vector_model || '');
+      syncField('rerankModelSelect', 'rerankModel', capabilityState.rerank_model || '');
+      document.getElementById('capNotes').value = capabilityState.notes || '';
+      document.getElementById('capInfo').textContent = JSON.stringify(capabilityState, null, 2);
+    }
+
+    async function loadOverview() {
+      overview = await (await fetch('/ai-registry/overview')).json();
+      setSelectOptions('vectorModelSelect', 'embedding');
+      setSelectOptions('rerankModelSelect', 'llm');
+      renderHints();
+    }
+
+    async function saveCaps() {
+      const body = {
+        vector_model: resolveFieldValue('vectorModelSelect', 'vectorModel'),
+        rerank_model: resolveFieldValue('rerankModelSelect', 'rerankModel'),
+        notes: document.getElementById('capNotes').value.trim(),
+      };
+      const resp = await fetch('/capabilities', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      capabilityState = await resp.json();
+      document.getElementById('capInfo').textContent = JSON.stringify(capabilityState, null, 2);
+      syncField('vectorModelSelect', 'vectorModel', capabilityState.vector_model || '');
+      syncField('rerankModelSelect', 'rerankModel', capabilityState.rerank_model || '');
+    }
+
+    async function loadAll() {
+      await loadOverview();
+      await loadCaps();
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>
