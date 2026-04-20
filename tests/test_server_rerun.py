@@ -39,7 +39,7 @@ def test_cleanup_latest_stage_artifacts_docs_scope_does_not_delete_code_files(tm
     task = Task(
         task_id="task-doc-cleanup-scope",
         domain="software",
-        required_capabilities=["doc.write:v1"],
+        required_capabilities=["delivery.readme:v1"],
         context={
             "leader_plan": {
                 "stages": [

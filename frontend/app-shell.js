@@ -11,7 +11,9 @@
     { key: 'home', href: '/', title: '主页', desc: '总览入口、近期任务与系统状态。' },
     { key: 'tasks', href: '/tasks.html', title: '任务中心', desc: '创建任务、挑选任务并执行流程。' },
     { key: 'models', href: '/models.html', title: '模型管理', desc: '维护凭据、模型清单与阶段绑定。' },
-    { key: 'capabilities', href: '/capabilities.html', title: '能力设置', desc: '配置知识库相关能力使用的模型。' },
+    { key: 'knowledge', href: '/knowledge.html', title: '知识库设置', desc: '配置向量模型、重排序模型与检索备注。' },
+    { key: 'capabilities', href: '/capabilities.html', title: '能力执行', desc: '为各能力选择执行方式与主绑定。' },
+    { key: 'skills', href: '/skills.html', title: '技能策略', desc: '配置各智能体的方法论、约束与偏好能力。' },
   ];
 
   sidebarHost.innerHTML = `

@@ -25,10 +25,12 @@ MANAGED_ROOT_FILES = {
 
 
 def cleanup_architecture_orphan_files(task: Task, workspace_root: str, stage_name: str, stage_def: Optional[Dict[str, Any]] = None) -> int:
-    from orchestration.graph_builder import (
+    from orchestration.document_rules import (
         _extract_architecture_file_list,
         _infer_project_stack,
         _normalize_architecture_file_list,
+    )
+    from orchestration.stage_catalog import (
         normalize_stage_type,
     )
 

@@ -3,57 +3,328 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>能力设置 - MACS</title>
-  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <title>能力执行 - MACS</title>
+  <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
-    .cap-grid {
+    .manage-layout {
       display: grid;
-      grid-template-columns: minmax(300px, 1.05fr) minmax(280px, 0.95fr);
+      grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(280px, 340px);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .list-panel {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .list-head {
+      padding: 18px;
+      border-bottom: 1px solid #e3edf6;
+    }
+
+    .list-body {
+      padding: 12px;
+      display: grid;
+      gap: 14px;
+      max-height: min(74vh, 980px);
+      overflow: auto;
+    }
+
+    .list-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    .list-group-title {
+      color: #597084;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 4px;
+    }
+
+    .cap-item {
+      border: 1px solid #dfeaf4;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 12px;
+    }
+
+    .cap-item.active {
+      border-color: #2f7df6;
+      box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.12);
+      background: #f7fbff;
+    }
+
+    .cap-item:hover {
+      transform: none;
+      filter: none;
+      box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.08);
+    }
+
+    .cap-item.disabled {
+      opacity: 0.7;
+      border-style: dashed;
+    }
+
+    .cap-item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .cap-item-main {
+      width: 100%;
+      display: block;
+      min-height: 0;
+      padding: 0;
+      text-align: left;
+      color: #19324e;
+      cursor: pointer;
+      box-shadow: none;
+      border: none;
+      background: transparent;
+    }
+
+    .cap-item-main:hover {
+      transform: none;
+      filter: none;
+      box-shadow: none;
+    }
+
+    .cap-item .name {
+      font-weight: 700;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .cap-item .meta {
+      margin-top: 6px;
+      color: #607286;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .cap-item-inline-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+
+    .editor-panel {
+      display: grid;
       gap: 18px;
     }
 
-    .model-hint-list {
+    .editor-card {
+      border: 1px solid #e0ebf4;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.96);
+      padding: 18px;
+    }
+
+    .editor-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .editor-head h2 {
+      margin: 0;
+      color: #17304d;
+      font-size: 22px;
+    }
+
+    .editor-desc {
+      margin-top: 6px;
+      color: #5f7286;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #eef2f7;
+      color: #54697b;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .cap-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #eef5ff;
+      color: #24507a;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .toggle-row {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin: 12px 0 2px;
+    }
+
+    .toggle-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #4f6477;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .switch-control {
+      position: relative;
+      display: inline-flex;
+      width: 46px;
+      height: 26px;
+      flex: 0 0 auto;
+    }
+
+    .switch-control input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+      z-index: 2;
+    }
+
+    .switch-slider {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: #d8e1ea;
+      transition: background-color 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: inset 0 0 0 1px rgba(28, 45, 64, 0.08);
+    }
+
+    .switch-slider::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 2px 6px rgba(21, 35, 53, 0.24);
+      transition: transform 0.22s ease;
+    }
+
+    .switch-control input:checked + .switch-slider {
+      background: linear-gradient(180deg, #5e96ff, #2f7df6);
+      box-shadow: inset 0 0 0 1px rgba(47, 125, 246, 0.2), 0 4px 12px rgba(47, 125, 246, 0.22);
+    }
+
+    .switch-control input:checked + .switch-slider::after {
+      transform: translateX(20px);
+    }
+
+    .switch-control input:focus-visible + .switch-slider {
+      outline: 3px solid rgba(47, 125, 246, 0.22);
+      outline-offset: 2px;
+    }
+
+    .editor-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 14px;
+      margin-top: 16px;
+    }
+
+    .editor-grid .full {
+      grid-column: 1 / -1;
+    }
+
+    .field-note {
+      margin-top: 6px;
+      color: #607286;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .callout-soft {
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px dashed #d2e2f0;
+      background: rgba(246, 250, 254, 0.94);
+      color: #5e7286;
+      line-height: 1.6;
+      font-size: 13px;
+    }
+
+    .side-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .hint-list {
       display: grid;
       gap: 10px;
     }
 
-    .model-hint {
+    .hint-card {
       padding: 14px;
       border-radius: 16px;
       border: 1px solid #e2ecf5;
       background: rgba(255, 255, 255, 0.94);
     }
 
-    .model-hint strong {
+    .hint-card strong {
       display: block;
       margin-bottom: 4px;
       color: #16304c;
     }
 
-    .model-hint span {
+    .hint-card span {
+      display: block;
       color: #607286;
       font-size: 13px;
       line-height: 1.6;
     }
 
-    .field-note {
-      margin-top: 8px;
-      color: #607286;
-      font-size: 12px;
-      line-height: 1.55;
-    }
+    @media (max-width: 1320px) {
+      .manage-layout {
+        grid-template-columns: 300px minmax(0, 1fr);
+      }
 
-    @media (max-width: 1180px) {
-      .cap-grid {
-        grid-template-columns: 1fr;
+      .side-stack {
+        grid-column: 1 / -1;
       }
     }
 
-    @media (max-width: 720px) {
-      .model-hint span {
-        display: block;
+    @media (max-width: 980px) {
+      .manage-layout,
+      .editor-grid {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -66,153 +337,886 @@
         <div class="page-heading">
           <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
           <div>
-            <h1>能力设置</h1>
-            <p class="page-subtitle">能力相关模型配置。</p>
+            <h1>能力执行</h1>
+            <p class="page-subtitle">先从左侧选择能力，再编辑它的专属配置。</p>
           </div>
         </div>
         <div class="page-actions">
-          <a class="button-link secondary" href="/models.html">去模型管理</a>
-          <a class="button-link" href="/tasks.html">去任务中心</a>
+          <button type="button" class="secondary" onclick="loadAll()">重新加载</button>
+          <button type="button" onclick="saveCapabilities()">保存配置</button>
+          <a class="button-link secondary" href="/skills.html">技能策略</a>
+          <a class="button-link secondary" href="/knowledge.html">知识库设置</a>
         </div>
       </header>
 
-      <section class="cap-grid">
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <h2>知识库模型配置</h2>
-              <p>选择或填写模型。</p>
-            </div>
+      <section class="manage-layout">
+        <section class="card list-panel">
+          <div class="list-head">
+            <h2>能力列表</h2>
+            <p>点击某个能力后，在右侧显示对应配置入口。</p>
           </div>
-
-          <label for="vectorModelSelect">向量模型</label>
-          <select id="vectorModelSelect"></select>
-          <div class="field-note">优先显示向量模型。</div>
-
-          <label for="vectorModel">向量模型手动输入</label>
-          <input id="vectorModel" placeholder="如 qwen3-embedding / registry:model:xxx / 其他 provider ID" />
-
-          <label for="rerankModelSelect">重排序模型</label>
-          <select id="rerankModelSelect"></select>
-          <div class="field-note">可选已注册模型，也可手填。</div>
-
-          <label for="rerankModel">重排序模型手动输入</label>
-          <input id="rerankModel" placeholder="如 bge-reranker / openai-main / 其他 provider ID" />
-
-          <label for="capNotes">备注</label>
-          <textarea id="capNotes" placeholder="记录当前能力模型的用途、注意事项或切换策略。"></textarea>
-
-          <div class="actions">
-            <button type="button" onclick="saveCaps()">保存配置</button>
-            <button type="button" class="secondary" onclick="loadAll()">重新加载</button>
-          </div>
+          <div id="capabilityList" class="list-body"></div>
         </section>
 
-        <div class="stack">
+        <section class="editor-panel">
+          <div id="capabilityEditor" class="editor-card"></div>
+        </section>
+
+        <aside class="side-stack">
           <section class="card">
             <div class="section-head">
-            <div>
-              <h2>可选模型参考</h2>
-              <p>已注册模型。</p>
+              <div>
+                <h2>配置说明</h2>
+                <p>不同类别能力展示不同配置项，不再一次性摊开全部字段。</p>
+              </div>
             </div>
-          </div>
-            <div id="modelHints" class="model-hint-list"></div>
+            <div class="hint-list">
+              <div class="hint-card">
+                <strong>提示词 / 规划类</strong>
+                <span>只保留启用、可见性、描述等轻量配置，不强行展示绑定和复杂参数。</span>
+              </div>
+              <div class="hint-card">
+                <strong>产物生成类</strong>
+                <span>如素材生成、文档生成，会额外展示绑定方式、默认参数、产物类型等配置。</span>
+              </div>
+              <div class="hint-card">
+                <strong>恢复默认</strong>
+                <span>会把当前能力重置到系统默认目录配置，并移除该能力的主绑定。</span>
+              </div>
+            </div>
           </section>
 
           <section class="card">
             <div class="section-head">
-            <div>
-              <h2>当前配置快照</h2>
-              <p>当前值。</p>
+              <div>
+                <h2>当前快照</h2>
+                <p>便于快速检查本地修改后的 `catalog + bindings`。</p>
+              </div>
             </div>
-          </div>
             <pre id="capInfo">{}</pre>
           </section>
-        </div>
+
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>MCP Servers</h2>
+                <p>直接粘贴 Claude Desktop 风格的 `mcpServers` JSON。</p>
+              </div>
+            </div>
+            <textarea id="mcpServersJson" style="min-height:220px;" placeholder='{"mcpServers":{"docx-mcp":{"command":"uvx","args":["docx-mcp"]}}}'></textarea>
+            <div class="actions" style="margin-top:12px;">
+              <button type="button" class="secondary" onclick="loadMcpServers()">重新加载 MCP</button>
+              <button type="button" onclick="saveMcpServers()">保存 MCP</button>
+            </div>
+          </section>
+        </aside>
       </section>
     </main>
   </div>
 
-  <script src="/app-shell.js"></script>
+  <script src="/app-shell.js?v=20260326b"></script>
   <script>
-    let capabilityState = { vector_model: '', rerank_model: '', notes: '' };
+    let capabilityState = { catalog: [], bindings: [], default_catalog: [] };
+    let mcpServerState = { mcpServers: {} };
     let overview = { models: [] };
+    let selectedCapabilityId = '';
+
+    const EXECUTION_MODES = [
+      { value: 'disabled', label: '不配置执行绑定' },
+      { value: 'internal_tool', label: '内部工具' },
+      { value: 'mcp_server', label: 'MCP 服务' },
+      { value: 'direct_model', label: '直连模型' },
+      { value: 'http_api', label: 'HTTP API' },
+      { value: 'workflow_api', label: '工作流 API' },
+    ];
+
+    const CATEGORY_LABELS = {
+      planning: '规划',
+      analysis: '分析',
+      design: '设计',
+      assets: '素材',
+      engineering: '工程',
+      quality: '质量',
+      delivery: '交付',
+      documents: '文档',
+      general: '通用',
+    };
+
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function safeId(text) {
+      return String(text || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    function primaryBindingId(capabilityId) {
+      return `primary:${capabilityId}`;
+    }
+
+    function defaultHttpBindingTemplates(capabilityId) {
+      if (capabilityId === 'asset.generate:v1') {
+        return {
+          requestParams: {
+            workflow: 'image-generation',
+            prompt: '{{asset.prompt}}',
+            output_formats: ['png'],
+            assets: '{{assets}}',
+          },
+          responseContract: {
+            status: 'success',
+            assets: [
+              {
+                key: 'mole',
+                url: 'https://example.com/assets/mole.png',
+                mime: 'image/png',
+              },
+            ],
+            errors: [],
+          },
+        };
+      }
+      if (capabilityId === 'doc.read:v1') {
+        return {
+          requestParams: {
+            action: 'read_document',
+            source_path: '{{source_path}}',
+            extract_mode: 'text',
+          },
+          responseContract: {
+            status: 'success',
+            text: '文档正文全文',
+            sections: [{ title: '第一节', text: '...' }],
+            metadata: {
+              filename: 'example.docx',
+              page_count: 3,
+            },
+            errors: [],
+          },
+        };
+      }
+      if (capabilityId === 'doc.write:v1') {
+        return {
+          requestParams: {
+            action: 'write_document',
+            target_filename: '{{target_filename}}',
+            content: '{{content}}',
+            output_format: 'docx',
+          },
+          responseContract: {
+            status: 'success',
+            artifact: {
+              filename: 'documents/output.docx',
+              url: 'https://example.com/documents/output.docx',
+              mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            },
+            errors: [],
+          },
+        };
+      }
+      return {
+        requestParams: {
+          action: 'execute_capability',
+          capability_id: capabilityId,
+        },
+        responseContract: {
+          status: 'success',
+          result: {},
+          errors: [],
+        },
+      };
+    }
+
+    function defaultMcpBindingTemplate(capabilityId) {
+      if (capabilityId === 'doc.read:v1') {
+        return {
+          mcp: {
+            server_name: 'docx-mcp',
+            transport: 'stdio',
+            launch: {
+              command: 'docx-mcp',
+              args: ['--transport', 'stdio'],
+              env: {},
+              cwd: '',
+            },
+            endpoint: {
+              url: '',
+              headers: {},
+            },
+            tools: [
+              { name: 'open_document', args_template: { file_path: '{{source_path}}' }, required: true },
+              { name: 'extract_document_structure', args_template: {}, result_path: '$.text', required: true },
+            ],
+            timeout_sec: 120,
+          },
+          defaults: {
+            prefer_external_binding: true,
+            extract_mode: 'text',
+          },
+          responseContract: {
+            status: 'success',
+            text: '文档正文全文',
+            metadata: { source_path: 'documents/source.docx' },
+            errors: [],
+          },
+        };
+      }
+      if (capabilityId === 'doc.write:v1') {
+        return {
+          mcp: {
+            server_name: 'docx-mcp',
+            transport: 'stdio',
+            launch: {
+              command: 'docx-mcp',
+              args: ['--transport', 'stdio'],
+              env: {},
+              cwd: '',
+            },
+            endpoint: {
+              url: '',
+              headers: {},
+            },
+            tools: [
+              { name: 'create_document', args_template: { file_path: '{{target_filename}}' }, required: true },
+              { name: 'smart_add_content', args_template: { content: '{{content}}', content_type: 'paragraph', style: 'normal', auto_format: true }, required: true },
+              { name: 'save_document', args_template: {}, required: true },
+            ],
+            timeout_sec: 120,
+          },
+          defaults: {
+            prefer_external_binding: true,
+            output_formats: ['docx'],
+            target_filename: 'documents/output.docx',
+          },
+          responseContract: {
+            status: 'success',
+            artifact: {
+              filename: 'documents/output.docx',
+              mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            },
+            errors: [],
+          },
+        };
+      }
+      return {
+        mcp: {
+          server_name: '',
+          transport: 'stdio',
+          launch: {
+            command: '',
+            args: [],
+            env: {},
+            cwd: '',
+          },
+          endpoint: {
+            url: '',
+            headers: {},
+          },
+          tools: [],
+          timeout_sec: 120,
+        },
+        defaults: {},
+        responseContract: {
+          status: 'success',
+          result: {},
+          errors: [],
+        },
+      };
+    }
+
+    function capabilityList() {
+      return capabilityState.catalog || [];
+    }
+
+    function selectedCapability() {
+      return capabilityList().find((item) => item.id === selectedCapabilityId) || null;
+    }
+
+    function defaultCapability(capabilityId) {
+      return (capabilityState.default_catalog || []).find((item) => item.id === capabilityId) || null;
+    }
+
+    function getPrimaryBinding(capabilityId) {
+      const bindings = Array.isArray(capabilityState.bindings) ? capabilityState.bindings : [];
+      const exact = bindings.find((item) => item && item.id === primaryBindingId(capabilityId));
+      if (exact) return exact;
+      return bindings.find((item) => item && item.capability_id === capabilityId) || null;
+    }
+
+    function profileFor(capability) {
+      const category = String((capability || {}).category || 'general');
+      const hasOutputs = Array.isArray(capability?.produces_artifact_types) && capability.produces_artifact_types.length > 0;
+      const hasRuntime = capability && capability.runtime_defaults && Object.keys(capability.runtime_defaults).length > 0;
+      const supportedBindingTypes = Array.isArray(capability?.supported_binding_types) ? capability.supported_binding_types : [];
+      const profile = {
+        showVisibility: true,
+        showDefaults: category !== 'planning',
+        showStageHints: category !== 'planning',
+        showHandler: category !== 'planning',
+        showOutputs: hasOutputs || ['assets', 'delivery', 'documents'].includes(category),
+        showModelKind: ['assets'].includes(category),
+        showRuntime: hasRuntime || ['assets', 'delivery', 'documents'].includes(category),
+        showBinding: supportedBindingTypes.length > 0,
+      };
+      if (category === 'planning') {
+        profile.showOutputs = false;
+        profile.showModelKind = false;
+        profile.showRuntime = false;
+        profile.showBinding = false;
+      }
+      return profile;
+    }
+
+    function parseStringList(text) {
+      return String(text || '').split(',').map((item) => item.trim()).filter(Boolean);
+    }
+
+    function parseJsonObject(text, label) {
+      const raw = String(text || '').trim();
+      if (!raw) return {};
+      try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed === 'object' && parsed && !Array.isArray(parsed) ? parsed : {};
+      } catch (_error) {
+        throw new Error(`${label} JSON 解析失败`);
+      }
+    }
+
+    function parseJsonArray(text, label) {
+      const raw = String(text || '').trim();
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) throw new Error('not-array');
+        return parsed;
+      } catch (_error) {
+        throw new Error(`${label} JSON 解析失败`);
+      }
+    }
+
+    function getFilteredModels(requiredKind) {
+      const models = overview.models || [];
+      if (!requiredKind) return models;
+      const preferred = models.filter((item) => (item.model_kind || '') === requiredKind);
+      return preferred.length ? preferred : models;
+    }
 
     function optionLabel(model) {
       return `${model.name} (${model.credential_name || model.provider_type || 'registry'})`;
     }
 
-    function setSelectOptions(selectId, preferredKind) {
-      const select = document.getElementById(selectId);
-      const preferred = (overview.models || []).filter((item) => (item.model_kind || '') === preferredKind);
-      const others = (overview.models || []).filter((item) => (item.model_kind || '') !== preferredKind);
-      const options = preferred.concat(others);
-      select.innerHTML = ['<option value="">不使用已注册模型</option>'].concat(options.map((model) => `<option value="${model.model_id}">${optionLabel(model)}</option>`)).join('');
-    }
-
-    function syncField(selectId, inputId, value) {
-      const select = document.getElementById(selectId);
-      const input = document.getElementById(inputId);
-      const inRegistry = Array.from(select.options).some((option) => option.value === value);
-      select.value = inRegistry ? value : '';
-      input.value = inRegistry ? '' : (value || '');
-    }
-
-    function resolveFieldValue(selectId, inputId) {
-      return document.getElementById(inputId).value.trim() || document.getElementById(selectId).value.trim();
-    }
-
-    function renderHints() {
-      const box = document.getElementById('modelHints');
-      const models = overview.models || [];
-      if (!models.length) {
-        box.innerHTML = '<div class="empty-state">还没有已注册模型。建议先去模型管理页完成凭据和模型录入。</div>';
+    function ensureSelectedCapability() {
+      const caps = capabilityList();
+      if (!caps.length) {
+        selectedCapabilityId = '';
         return;
       }
-      box.innerHTML = models.slice(0, 8).map((model) => `
-        <div class="model-hint">
-          <strong>${model.name}</strong>
-          <span>model_id: ${model.model_id}</span>
-          <span>类型: ${model.model_kind || 'unknown'} · provider: ${model.provider_type || 'unknown'}</span>
+      if (!selectedCapabilityId || !caps.some((item) => item.id === selectedCapabilityId)) {
+        selectedCapabilityId = caps[0].id;
+      }
+    }
+
+    function updateSnapshot() {
+      document.getElementById('capInfo').textContent = JSON.stringify({
+        catalog: capabilityState.catalog || [],
+        bindings: capabilityState.bindings || [],
+        mcpServers: mcpServerState.mcpServers || {},
+      }, null, 2);
+    }
+
+    function renderMcpServers() {
+      const host = document.getElementById('mcpServersJson');
+      if (!host) return;
+      host.value = JSON.stringify(mcpServerState || { mcpServers: {} }, null, 2);
+    }
+
+    function renderCapabilityList() {
+      const host = document.getElementById('capabilityList');
+      const caps = capabilityList();
+      if (!caps.length) {
+        host.innerHTML = '<div class="empty-state">当前没有可配置的能力。</div>';
+        return;
+      }
+      const grouped = caps.reduce((acc, item) => {
+        const key = String(item.category || 'general');
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(item);
+        return acc;
+      }, {});
+      host.innerHTML = Object.entries(grouped).map(([category, items]) => `
+        <div class="list-group">
+          <div class="list-group-title">${escapeHtml(CATEGORY_LABELS[category] || category)}</div>
+          ${items.map((item) => `
+            <div class="cap-item ${item.id === selectedCapabilityId ? 'active' : ''} ${item.enabled === false ? 'disabled' : ''}">
+              <div class="cap-item-head">
+                <button type="button" class="cap-item-main" onclick="selectCapability('${escapeHtml(item.id)}')">
+                  <div class="name">
+                    <span>${escapeHtml(item.label || item.id)}</span>
+                  </div>
+                  <div class="meta">${escapeHtml(item.id)}</div>
+                </button>
+                <label class="cap-item-inline-toggle" title="启用能力">
+                  <span class="switch-control">
+                    <input
+                      type="checkbox"
+                      ${item.enabled === false ? '' : 'checked'}
+                      onchange="toggleCapabilityEnabledFromList('${escapeHtml(item.id)}', this.checked)"
+                    />
+                    <span class="switch-slider"></span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          `).join('')}
         </div>
       `).join('');
     }
 
-    async function loadCaps() {
-      capabilityState = await (await fetch('/capabilities')).json();
-      syncField('vectorModelSelect', 'vectorModel', capabilityState.vector_model || '');
-      syncField('rerankModelSelect', 'rerankModel', capabilityState.rerank_model || '');
-      document.getElementById('capNotes').value = capabilityState.notes || '';
-      document.getElementById('capInfo').textContent = JSON.stringify(capabilityState, null, 2);
+    function renderCapabilityEditor() {
+      const host = document.getElementById('capabilityEditor');
+      const capability = selectedCapability();
+      if (!capability) {
+        host.innerHTML = '<div class="empty-state">请选择一个能力。</div>';
+        return;
+      }
+      const binding = getPrimaryBinding(capability.id) || {};
+      const profile = profileFor(capability);
+      const sid = safeId(capability.id);
+      const mode = binding.binding_type || 'disabled';
+      const requiredKind = capability.required_model_kind || binding.required_model_kind || '';
+      const models = getFilteredModels(requiredKind);
+      const selectedModelId = (binding.model || {}).model_id || '';
+      const transport = binding.transport || {};
+      const tool = binding.tool || {};
+      const mcpTemplate = defaultMcpBindingTemplate(capability.id);
+      const mcp = binding.mcp || mcpTemplate.mcp || {};
+      const mcpLaunch = mcp.launch || {};
+      const mcpEndpoint = mcp.endpoint || {};
+      const httpTemplates = defaultHttpBindingTemplates(capability.id);
+      const requestParamsValue = JSON.stringify(transport.request_params || httpTemplates.requestParams || {}, null, 2);
+      const modeResponseTemplate = mode === 'mcp_server' ? mcpTemplate.responseContract : httpTemplates.responseContract;
+      const responseContractValue = JSON.stringify(binding.response_contract || modeResponseTemplate || {}, null, 2);
+      const headersValue = JSON.stringify(transport.headers || {}, null, 2);
+      const mcpArgsValue = JSON.stringify(mcpLaunch.args || [], null, 2);
+      const mcpEnvValue = JSON.stringify(mcpLaunch.env || {}, null, 2);
+      const mcpHeadersValue = JSON.stringify(mcpEndpoint.headers || {}, null, 2);
+      const mcpToolsValue = JSON.stringify(mcp.tools || mcpTemplate.mcp.tools || [], null, 2);
+      const defaultsValue = JSON.stringify(binding.defaults || (mode === 'mcp_server' ? mcpTemplate.defaults : {}) || {}, null, 2);
+      host.innerHTML = `
+        <div class="editor-head">
+          <div>
+            <h2>${escapeHtml(capability.label || capability.id)}</h2>
+            <div class="editor-desc">${escapeHtml(capability.description || '暂无说明')}</div>
+            <div class="chip-row">
+              <span class="cap-chip">${escapeHtml(capability.id)}</span>
+              <span class="cap-chip">category: ${escapeHtml(capability.category || 'general')}</span>
+              ${requiredKind ? `<span class="cap-chip">model_kind: ${escapeHtml(requiredKind)}</span>` : ''}
+            </div>
+          </div>
+          <span class="mode-badge">${capability.enabled === false ? '已禁用' : (EXECUTION_MODES.find((item) => item.value === mode)?.label || '轻量能力')}</span>
+        </div>
+
+        <div class="toggle-row">
+          <label class="toggle-item">
+            <span class="switch-control">
+              <input id="enabled-${sid}" type="checkbox" ${capability.enabled === false ? '' : 'checked'} />
+              <span class="switch-slider"></span>
+            </span>
+            启用能力
+          </label>
+          ${profile.showVisibility ? `
+            <label class="toggle-item">
+              <span class="switch-control">
+                <input id="planner-${sid}" type="checkbox" ${capability.planner_visible === false ? '' : 'checked'} />
+                <span class="switch-slider"></span>
+              </span>
+              Leader 可见
+            </label>
+          ` : ''}
+          ${profile.showDefaults ? `
+            <label class="toggle-item">
+              <span class="switch-control">
+                <input id="default-${sid}" type="checkbox" ${capability.default_stage_assignment ? 'checked' : ''} />
+                <span class="switch-slider"></span>
+              </span>
+              作为阶段默认能力
+            </label>
+          ` : ''}
+        </div>
+
+        <div class="editor-grid">
+          <div>
+            <label for="label-${sid}">显示名称</label>
+            <input id="label-${sid}" value="${escapeHtml(capability.label || capability.id)}" />
+          </div>
+
+          <div>
+            <label for="category-${sid}">分类</label>
+            <input id="category-${sid}" value="${escapeHtml(capability.category || 'general')}" />
+          </div>
+
+          <div class="full">
+            <label for="description-${sid}">描述</label>
+            <textarea id="description-${sid}" placeholder="能力说明">${escapeHtml(capability.description || '')}</textarea>
+          </div>
+
+          ${profile.showStageHints ? `
+            <div>
+              <label for="stages-${sid}">推荐阶段</label>
+              <input id="stages-${sid}" value="${escapeHtml((capability.recommended_stage_types || []).join(', '))}" placeholder="如 assets, coding" />
+            </div>
+          ` : ''}
+
+          ${profile.showHandler ? `
+            <div>
+              <label for="handler-${sid}">处理器 ID</label>
+              <input id="handler-${sid}" value="${escapeHtml(capability.handler || capability.id)}" />
+            </div>
+          ` : ''}
+
+          ${profile.showOutputs ? `
+            <div class="full">
+              <label for="artifacts-${sid}">产物类型</label>
+              <input id="artifacts-${sid}" value="${escapeHtml((capability.produces_artifact_types || []).join(', '))}" placeholder="如 md, docx, json" />
+            </div>
+          ` : ''}
+
+          ${profile.showModelKind ? `
+            <div>
+              <label for="required-kind-${sid}">所需模型类型</label>
+              <input id="required-kind-${sid}" value="${escapeHtml(capability.required_model_kind || '')}" placeholder="如 image / llm / embedding" />
+            </div>
+          ` : ''}
+
+          ${profile.showRuntime ? `
+            <div class="full">
+              <label for="runtime-${sid}">能力默认参数 JSON</label>
+              <textarea id="runtime-${sid}" placeholder='例如 {"output_formats":["md","docx"]}'>${escapeHtml(JSON.stringify(capability.runtime_defaults || {}, null, 2))}</textarea>
+            </div>
+          ` : ''}
+
+          ${profile.showBinding ? `
+            <>
+              <div class="full callout-soft">
+                当前能力支持独立执行绑定。未配置主绑定时，只保留能力定义，不会分配外部执行方式。
+              </div>
+              <div>
+                <label for="mode-${sid}">执行方式</label>
+                <select id="mode-${sid}" onchange="toggleBindingFields()">
+                  ${EXECUTION_MODES.map((item) => `<option value="${item.value}" ${item.value === mode ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+                </select>
+              </div>
+
+              <div>
+                <label for="priority-${sid}">优先级</label>
+                <input id="priority-${sid}" type="number" value="${escapeHtml(String(binding.priority ?? 100))}" />
+              </div>
+
+              <div class="binding-direct">
+                <label for="model-${sid}">绑定模型</label>
+                <select id="model-${sid}">
+                  <option value="">不指定已注册模型</option>
+                  ${models.map((model) => `<option value="${escapeHtml(model.model_id)}" ${model.model_id === selectedModelId ? 'selected' : ''}>${escapeHtml(optionLabel(model))}</option>`).join('')}
+                </select>
+              </div>
+
+              <div class="binding-http binding-workflow">
+                <label for="method-${sid}">请求方法</label>
+                <select id="method-${sid}">
+                  ${['POST', 'GET', 'PUT'].map((method) => `<option value="${method}" ${String(transport.method || 'POST').toUpperCase() === method ? 'selected' : ''}>${method}</option>`).join('')}
+                </select>
+              </div>
+
+              <div class="full binding-http binding-workflow">
+                <label for="url-${sid}">接口地址</label>
+                <input id="url-${sid}" value="${escapeHtml(transport.url || '')}" placeholder="如 http://127.0.0.1:8188/prompt" />
+              </div>
+
+              <div class="full binding-http binding-workflow">
+                <label for="headers-${sid}">请求头 JSON</label>
+                <textarea id="headers-${sid}" placeholder='例如 {"Authorization":"Bearer xxx"}'>${escapeHtml(headersValue)}</textarea>
+              </div>
+
+              <div class="full binding-http binding-workflow">
+                <label for="request-params-${sid}">请求参数 JSON</label>
+                <textarea id="request-params-${sid}" placeholder='例如 {"prompt":"{{content}}","target_filename":"documents/output.docx"}'>${escapeHtml(requestParamsValue)}</textarea>
+                <div class="field-note">这里用于配置调用 HTTP API / 工作流 API 时发送的请求参数模板。</div>
+              </div>
+
+              <div class="full binding-http binding-workflow binding-mcp">
+                <label for="response-contract-${sid}">返回格式要求 JSON</label>
+                <textarea id="response-contract-${sid}" placeholder='例如 {"status":"success","artifact":{"filename":"documents/output.docx"}}'>${escapeHtml(responseContractValue)}</textarea>
+                <div class="field-note">外部服务返回结果应尽量符合这个结构，方便系统后续解析与落盘。</div>
+              </div>
+
+              <div class="full binding-tool">
+                <label for="command-${sid}">工具命令</label>
+                <input id="command-${sid}" value="${escapeHtml(tool.command || '')}" placeholder="如 python scripts/generate_asset.py" />
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-server-name-${sid}">MCP 服务名</label>
+                <input id="mcp-server-name-${sid}" value="${escapeHtml(mcp.server_name || '')}" placeholder="如 docx-mcp / filesystem / playwright" />
+                <div class="field-note">如果这里填写的服务名存在于右侧 `MCP Servers` JSON 中，系统会自动补全 command / args / env / url。</div>
+              </div>
+
+              <div class="binding-mcp">
+                <label for="mcp-transport-${sid}">MCP 传输方式</label>
+                <select id="mcp-transport-${sid}">
+                  ${['stdio', 'sse', 'streamable_http', 'hybrid'].map((item) => `<option value="${item}" ${String(mcp.transport || 'stdio') === item ? 'selected' : ''}>${item}</option>`).join('')}
+                </select>
+              </div>
+
+              <div class="binding-mcp">
+                <label for="mcp-timeout-${sid}">超时（秒）</label>
+                <input id="mcp-timeout-${sid}" type="number" value="${escapeHtml(String(mcp.timeout_sec ?? 120))}" />
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-command-${sid}">启动命令</label>
+                <input id="mcp-command-${sid}" value="${escapeHtml(mcpLaunch.command || '')}" placeholder="如 docx-mcp" />
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-args-${sid}">启动参数 JSON</label>
+                <textarea id="mcp-args-${sid}" placeholder='例如 ["--transport","stdio"]'>${escapeHtml(mcpArgsValue)}</textarea>
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-env-${sid}">环境变量 JSON</label>
+                <textarea id="mcp-env-${sid}" placeholder='例如 {"PYTHONUTF8":"1"}'>${escapeHtml(mcpEnvValue)}</textarea>
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-cwd-${sid}">工作目录</label>
+                <input id="mcp-cwd-${sid}" value="${escapeHtml(mcpLaunch.cwd || '')}" placeholder="可留空，按默认环境启动" />
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-url-${sid}">远端地址</label>
+                <input id="mcp-url-${sid}" value="${escapeHtml(mcpEndpoint.url || '')}" placeholder="SSE / Streamable HTTP 模式时填写，如 http://127.0.0.1:8000/mcp" />
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-headers-${sid}">远端请求头 JSON</label>
+                <textarea id="mcp-headers-${sid}" placeholder='例如 {"Authorization":"Bearer xxx"}'>${escapeHtml(mcpHeadersValue)}</textarea>
+              </div>
+
+              <div class="full binding-mcp">
+                <label for="mcp-tools-${sid}">MCP 工具链 JSON</label>
+                <textarea id="mcp-tools-${sid}" placeholder='例如 [{"name":"open_document","args_template":{"file_path":"{{source_path}}"}}]'>${escapeHtml(mcpToolsValue)}</textarea>
+                <div class="field-note">这里按配置描述要调用的 MCP 工具序列。以后接新的 MCP，优先改这里而不是改后端代码。</div>
+              </div>
+
+              <div class="full">
+                <label for="defaults-${sid}">绑定默认参数 JSON</label>
+                <textarea id="defaults-${sid}" placeholder='例如 {"asset_mode":"external_binding","output_formats":["png"]}'>${escapeHtml(defaultsValue)}</textarea>
+                <div class="field-note">绑定默认参数会覆盖能力默认参数，再与阶段级 capability_options 合并。</div>
+              </div>
+            </>
+          ` : `
+            <div class="full callout-soft">当前能力属于轻量配置类型，不展示独立执行绑定；主要由系统内置提示词、规划或流程逻辑驱动。</div>
+          `}
+        </div>
+
+        <div class="actions" style="margin-top:16px;">
+          <button type="button" class="secondary" onclick="restoreSelectedCapability()">恢复默认配置</button>
+          <button type="button" onclick="saveCapabilities()">保存全部配置</button>
+        </div>
+      `;
+      toggleBindingFields();
     }
 
-    async function loadOverview() {
-      overview = await (await fetch('/ai-registry/overview')).json();
-      setSelectOptions('vectorModelSelect', 'embedding');
-      setSelectOptions('rerankModelSelect', 'llm');
-      renderHints();
-    }
-
-    async function saveCaps() {
-      const body = {
-        vector_model: resolveFieldValue('vectorModelSelect', 'vectorModel'),
-        rerank_model: resolveFieldValue('rerankModelSelect', 'rerankModel'),
-        notes: document.getElementById('capNotes').value.trim(),
-      };
-      const resp = await fetch('/capabilities', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(body),
+    function toggleBindingFields() {
+      const capability = selectedCapability();
+      if (!capability) return;
+      const profile = profileFor(capability);
+      if (!profile.showBinding) return;
+      const sid = safeId(capability.id);
+      const mode = document.getElementById(`mode-${sid}`)?.value || 'disabled';
+      [['direct_model', 'binding-direct'], ['http_api', 'binding-http'], ['workflow_api', 'binding-workflow'], ['internal_tool', 'binding-tool'], ['mcp_server', 'binding-mcp']].forEach(([expected, className]) => {
+        document.querySelectorAll(`.${className}`).forEach((element) => {
+          element.style.display = mode === expected ? '' : 'none';
+        });
       });
-      capabilityState = await resp.json();
-      document.getElementById('capInfo').textContent = JSON.stringify(capabilityState, null, 2);
-      syncField('vectorModelSelect', 'vectorModel', capabilityState.vector_model || '');
-      syncField('rerankModelSelect', 'rerankModel', capabilityState.rerank_model || '');
+    }
+
+    function persistCurrentEditor() {
+      const capability = selectedCapability();
+      if (!capability) return;
+      const sid = safeId(capability.id);
+      const profile = profileFor(capability);
+      const nextCapability = {
+        ...capability,
+        label: document.getElementById(`label-${sid}`)?.value.trim() || capability.id,
+        category: document.getElementById(`category-${sid}`)?.value.trim() || 'general',
+        description: document.getElementById(`description-${sid}`)?.value.trim() || '',
+        enabled: !!document.getElementById(`enabled-${sid}`)?.checked,
+      };
+      if (profile.showVisibility) nextCapability.planner_visible = !!document.getElementById(`planner-${sid}`)?.checked;
+      if (profile.showDefaults) nextCapability.default_stage_assignment = !!document.getElementById(`default-${sid}`)?.checked;
+      if (profile.showStageHints) nextCapability.recommended_stage_types = parseStringList(document.getElementById(`stages-${sid}`)?.value || '');
+      if (profile.showHandler) nextCapability.handler = document.getElementById(`handler-${sid}`)?.value.trim() || capability.id;
+      if (profile.showOutputs) nextCapability.produces_artifact_types = parseStringList(document.getElementById(`artifacts-${sid}`)?.value || '');
+      if (profile.showModelKind) nextCapability.required_model_kind = document.getElementById(`required-kind-${sid}`)?.value.trim() || '';
+      if (profile.showRuntime) nextCapability.runtime_defaults = parseJsonObject(document.getElementById(`runtime-${sid}`)?.value || '{}', `${capability.label || capability.id} 的能力默认参数`);
+      capabilityState.catalog = capabilityState.catalog.map((item) => item.id === capability.id ? nextCapability : item);
+
+      if (!profile.showBinding) {
+        updateSnapshot();
+        return;
+      }
+
+      const mode = document.getElementById(`mode-${sid}`)?.value || 'disabled';
+      capabilityState.bindings = (capabilityState.bindings || []).filter((item) => item && item.id !== primaryBindingId(capability.id));
+      if (nextCapability.enabled === false || mode === 'disabled') {
+        updateSnapshot();
+        return;
+      }
+      const binding = {
+        id: primaryBindingId(capability.id),
+        capability_id: capability.id,
+        label: `${nextCapability.label || capability.id} 主绑定`,
+        binding_type: mode,
+        enabled: true,
+        priority: Number(document.getElementById(`priority-${sid}`)?.value || 100),
+        required_model_kind: nextCapability.required_model_kind || '',
+        defaults: parseJsonObject(document.getElementById(`defaults-${sid}`)?.value || '{}', `${capability.label || capability.id} 的绑定默认参数`),
+      };
+      if (mode === 'direct_model') {
+        const modelId = document.getElementById(`model-${sid}`)?.value.trim();
+        if (modelId) binding.model = { model_id: modelId };
+      } else if (mode === 'http_api' || mode === 'workflow_api') {
+        binding.transport = {
+          url: document.getElementById(`url-${sid}`)?.value.trim() || '',
+          method: document.getElementById(`method-${sid}`)?.value.trim() || 'POST',
+          headers: parseJsonObject(document.getElementById(`headers-${sid}`)?.value || '{}', `${capability.label || capability.id} 的请求头`),
+          request_params: parseJsonObject(document.getElementById(`request-params-${sid}`)?.value || '{}', `${capability.label || capability.id} 的请求参数`),
+        };
+        binding.response_contract = parseJsonObject(document.getElementById(`response-contract-${sid}`)?.value || '{}', `${capability.label || capability.id} 的返回格式要求`);
+      } else if (mode === 'internal_tool') {
+        binding.tool = { command: document.getElementById(`command-${sid}`)?.value.trim() || '' };
+      } else if (mode === 'mcp_server') {
+        binding.mcp = {
+          server_name: document.getElementById(`mcp-server-name-${sid}`)?.value.trim() || '',
+          transport: document.getElementById(`mcp-transport-${sid}`)?.value.trim() || 'stdio',
+          launch: {
+            command: document.getElementById(`mcp-command-${sid}`)?.value.trim() || '',
+            args: parseJsonArray(document.getElementById(`mcp-args-${sid}`)?.value || '[]', `${capability.label || capability.id} 的 MCP 启动参数`),
+            env: parseJsonObject(document.getElementById(`mcp-env-${sid}`)?.value || '{}', `${capability.label || capability.id} 的 MCP 环境变量`),
+            cwd: document.getElementById(`mcp-cwd-${sid}`)?.value.trim() || '',
+          },
+          endpoint: {
+            url: document.getElementById(`mcp-url-${sid}`)?.value.trim() || '',
+            headers: parseJsonObject(document.getElementById(`mcp-headers-${sid}`)?.value || '{}', `${capability.label || capability.id} 的 MCP 请求头`),
+          },
+          tools: parseJsonArray(document.getElementById(`mcp-tools-${sid}`)?.value || '[]', `${capability.label || capability.id} 的 MCP 工具链`),
+          timeout_sec: Number(document.getElementById(`mcp-timeout-${sid}`)?.value || 120),
+        };
+        binding.response_contract = parseJsonObject(document.getElementById(`response-contract-${sid}`)?.value || '{}', `${capability.label || capability.id} 的返回格式要求`);
+      }
+      capabilityState.bindings.push(binding);
+      updateSnapshot();
+    }
+
+    function selectCapability(capabilityId) {
+      persistCurrentEditor();
+      selectedCapabilityId = capabilityId;
+      renderCapabilityList();
+      renderCapabilityEditor();
+    }
+
+    function toggleCapabilityEnabledFromList(capabilityId, checked) {
+      persistCurrentEditor();
+      capabilityState.catalog = capabilityState.catalog.map((item) => (
+        item.id === capabilityId ? { ...item, enabled: !!checked } : item
+      ));
+      updateSnapshot();
+      renderCapabilityList();
+      if (selectedCapabilityId === capabilityId) {
+        renderCapabilityEditor();
+      }
+    }
+
+    function restoreSelectedCapability() {
+      persistCurrentEditor();
+      const capability = selectedCapability();
+      if (!capability) return;
+      const defaultItem = defaultCapability(capability.id);
+      if (!defaultItem) {
+        alert('当前能力没有可恢复的默认配置');
+        return;
+      }
+      capabilityState.catalog = capabilityState.catalog.map((item) => item.id === capability.id ? JSON.parse(JSON.stringify(defaultItem)) : item);
+      capabilityState.bindings = (capabilityState.bindings || []).filter((item) => item && item.id !== primaryBindingId(capability.id));
+      updateSnapshot();
+      renderCapabilityList();
+      renderCapabilityEditor();
+    }
+
+    async function saveCapabilities() {
+      try {
+        persistCurrentEditor();
+        const resp = await fetch('/capabilities', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            catalog: capabilityState.catalog,
+            bindings: capabilityState.bindings,
+          }),
+        });
+        capabilityState = await resp.json();
+        ensureSelectedCapability();
+        updateSnapshot();
+        renderCapabilityList();
+        renderCapabilityEditor();
+      } catch (error) {
+        alert(error.message || '保存失败');
+      }
+    }
+
+    async function loadMcpServers() {
+      try {
+        const resp = await fetch('/mcp-servers');
+        mcpServerState = await resp.json();
+        renderMcpServers();
+        updateSnapshot();
+      } catch (error) {
+        alert(error.message || '加载 MCP Servers 失败');
+      }
+    }
+
+    async function saveMcpServers() {
+      try {
+        const raw = document.getElementById('mcpServersJson')?.value || '{}';
+        const payload = JSON.parse(raw);
+        const resp = await fetch('/mcp-servers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        mcpServerState = await resp.json();
+        renderMcpServers();
+        updateSnapshot();
+      } catch (error) {
+        alert(error.message || '保存 MCP Servers 失败');
+      }
     }
 
     async function loadAll() {
-      await loadOverview();
-      await loadCaps();
+      const [capResp, overviewResp, mcpResp] = await Promise.all([
+        fetch('/capabilities'),
+        fetch('/ai-registry/overview'),
+        fetch('/mcp-servers'),
+      ]);
+      capabilityState = await capResp.json();
+      overview = await overviewResp.json();
+      mcpServerState = await mcpResp.json();
+      ensureSelectedCapability();
+      updateSnapshot();
+      renderMcpServers();
+      renderCapabilityList();
+      renderCapabilityEditor();
     }
 
     loadAll();

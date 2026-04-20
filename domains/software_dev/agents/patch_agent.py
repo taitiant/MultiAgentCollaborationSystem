@@ -126,7 +126,7 @@ class PatchAgent:
     id = "patcher"
     role_name = "PatchAgent"
     domain = "software"
-    capabilities: List[str] = ["code.edit:v1", "code.diff:v1"]
+    capabilities: List[str] = []
 
     def __init__(self, model_adapter=None, storage=None, stage_name: str = "coding", stage_type: str = "coding", progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
         self.model_adapter = model_adapter

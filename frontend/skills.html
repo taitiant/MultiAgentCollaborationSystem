@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>技能策略 - MACS</title>
+  <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+    .manage-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(280px, 340px);
+      gap: 18px;
+      align-items: start;
+    }
+    .list-panel { padding: 0; overflow: hidden; }
+    .list-head { padding: 18px; border-bottom: 1px solid #e3edf6; }
+    .list-body { padding: 12px; display: grid; gap: 14px; max-height: min(74vh, 980px); overflow: auto; }
+    .list-group { display: grid; gap: 8px; }
+    .list-group-title { color: #597084; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 4px; }
+    .skill-item { border: 1px solid #dfeaf4; border-radius: 16px; background: rgba(255, 255, 255, 0.95); padding: 12px; }
+    .skill-item.active { border-color: #2f7df6; box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.12); background: #f7fbff; }
+    .skill-item.disabled { opacity: 0.7; border-style: dashed; }
+    .skill-item:hover { transform: none; filter: none; box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.08); }
+    .skill-item-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .skill-item-main { width: 100%; display: block; min-height: 0; padding: 0; text-align: left; color: #19324e; cursor: pointer; box-shadow: none; border: none; background: transparent; }
+    .skill-item-main:hover { transform: none; filter: none; box-shadow: none; }
+    .skill-item .name { font-weight: 700; display: flex; gap: 6px; align-items: center; }
+    .skill-item .meta { margin-top: 6px; color: #607286; font-size: 12px; line-height: 1.55; }
+    .skill-item-inline-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+
+    .editor-panel, .side-stack { display: grid; gap: 18px; }
+    .editor-card { border: 1px solid #e0ebf4; border-radius: 20px; background: rgba(255, 255, 255, 0.96); padding: 18px; }
+    .editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+    .editor-head h2 { margin: 0; color: #17304d; font-size: 22px; }
+    .editor-desc { margin-top: 6px; color: #5f7286; font-size: 13px; line-height: 1.65; }
+    .mode-badge { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #eef2f7; color: #54697b; }
+    .chip-row, .tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .skill-chip, .tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: #eef5ff; color: #24507a; font-size: 12px; font-weight: 600; }
+    .tag { background: #eef3f8; color: #486178; }
+    .toggle-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 12px 0 2px; }
+    .toggle-item { display: inline-flex; align-items: center; gap: 8px; color: #4f6477; font-size: 13px; font-weight: 600; }
+    .switch-control { position: relative; display: inline-flex; width: 46px; height: 26px; flex: 0 0 auto; }
+    .switch-control input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 2; }
+    .switch-slider { position: absolute; inset: 0; border-radius: 999px; background: #d8e1ea; transition: background-color 0.2s ease, box-shadow 0.2s ease; box-shadow: inset 0 0 0 1px rgba(28, 45, 64, 0.08); }
+    .switch-slider::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #ffffff; box-shadow: 0 2px 6px rgba(21, 35, 53, 0.24); transition: transform 0.22s ease; }
+    .switch-control input:checked + .switch-slider { background: linear-gradient(180deg, #5e96ff, #2f7df6); box-shadow: inset 0 0 0 1px rgba(47, 125, 246, 0.2), 0 4px 12px rgba(47, 125, 246, 0.22); }
+    .switch-control input:checked + .switch-slider::after { transform: translateX(20px); }
+    .switch-control input:focus-visible + .switch-slider { outline: 3px solid rgba(47, 125, 246, 0.22); outline-offset: 2px; }
+    .editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; margin-top: 16px; }
+    .editor-grid .full { grid-column: 1 / -1; }
+    .field-note { margin-top: 6px; color: #607286; font-size: 12px; line-height: 1.55; }
+    .callout-soft { padding: 12px 14px; border-radius: 16px; border: 1px dashed #d2e2f0; background: rgba(246, 250, 254, 0.94); color: #5e7286; line-height: 1.6; font-size: 13px; }
+    .hint-list { display: grid; gap: 10px; }
+    .hint-card { padding: 14px; border-radius: 16px; border: 1px solid #e2ecf5; background: rgba(255, 255, 255, 0.94); }
+    .hint-card strong { display: block; margin-bottom: 4px; color: #16304c; }
+    .hint-card span { display: block; color: #607286; font-size: 13px; line-height: 1.6; }
+    label { display: block; font-weight: 600; font-size: 12px; margin: 8px 0 4px; }
+    input, select, textarea { width: 100%; border: 1px solid #d0dae5; border-radius: 10px; padding: 8px 9px; font: inherit; color: #1f2f3e; background: #fff; }
+    textarea { resize: vertical; min-height: 110px; }
+    pre { background: #0f1628; color: #d4ddff; border-radius: 12px; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+    @media (max-width: 1320px) { .manage-layout { grid-template-columns: 300px minmax(0, 1fr); } .side-stack { grid-column: 1 / -1; } }
+    @media (max-width: 980px) { .manage-layout, .editor-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body class="app-page" data-page="skills">
+  <div class="app-shell">
+    <aside class="app-sidebar" data-shell-sidebar></aside>
+    <main class="app-main">
+      <header class="page-header">
+        <div class="page-heading">
+          <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
+          <div>
+            <h1>技能策略</h1>
+            <p class="page-subtitle">Skill 负责增强智能体的方法论、约束和 capability 使用策略。</p>
+          </div>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="secondary" onclick="loadAll()">重新加载</button>
+          <button type="button" onclick="saveSkills()">保存配置</button>
+          <a class="button-link secondary" href="/capabilities.html">能力执行</a>
+        </div>
+      </header>
+
+      <section class="manage-layout">
+        <section class="card list-panel">
+          <div class="list-head">
+            <h2>技能列表</h2>
+            <p>点击左侧 skill，在右侧编辑它的方法论与偏好能力。</p>
+          </div>
+          <div id="skillList" class="list-body"></div>
+        </section>
+
+        <section class="editor-panel">
+          <div id="skillEditor" class="editor-card"></div>
+        </section>
+
+        <aside class="side-stack">
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>设计原则</h2>
+                <p>Skill 影响“怎么做”，Capability 影响“能怎么做”。</p>
+              </div>
+            </div>
+            <div class="hint-list">
+              <div class="hint-card">
+                <strong>Skill 不是权限</strong>
+                <span>Agent 可以直接调用 capability，skill 主要用于注入方法论、约束和调用策略。</span>
+              </div>
+              <div class="hint-card">
+                <strong>偏好 vs 必需</strong>
+                <span>`preferred_capabilities` 用于建议搭配；`required_capabilities` 用于声明没有这些能力时 skill 无法完整落地。</span>
+              </div>
+              <div class="hint-card">
+                <strong>恢复默认</strong>
+                <span>可把当前 skill 重置到系统默认配置，便于收敛阶段策略。</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>当前快照</h2>
+                <p>用于快速检查本地修改后的 skill 目录。</p>
+              </div>
+            </div>
+            <pre id="skillInfo">{}</pre>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app-shell.js?v=20260326b"></script>
+  <script>
+    let skillState = { catalog: [], default_catalog: [], notes: '' };
+    let selectedSkillId = '';
+
+    const CATEGORY_LABELS = {
+      planning: '规划',
+      analysis: '分析',
+      design: '设计',
+      assets: '素材',
+      engineering: '工程',
+      quality: '质量',
+      delivery: '交付',
+      general: '通用',
+    };
+
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function parseStringList(text) {
+      return String(text || '').split(',').map((item) => item.trim()).filter(Boolean);
+    }
+
+    function safeId(text) {
+      return String(text || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    function skillList() {
+      return skillState.catalog || [];
+    }
+
+    function selectedSkill() {
+      return skillList().find((item) => item.id === selectedSkillId) || null;
+    }
+
+    function defaultSkill(skillId) {
+      return (skillState.default_catalog || []).find((item) => item.id === skillId) || null;
+    }
+
+    function ensureSelectedSkill() {
+      const skills = skillList();
+      if (!skills.length) {
+        selectedSkillId = '';
+        return;
+      }
+      if (!selectedSkillId || !skills.some((item) => item.id === selectedSkillId)) {
+        selectedSkillId = skills[0].id;
+      }
+    }
+
+    function updateSnapshot() {
+      document.getElementById('skillInfo').textContent = JSON.stringify({
+        notes: skillState.notes || '',
+        catalog: skillState.catalog || [],
+      }, null, 2);
+    }
+
+    function renderSkillList() {
+      const host = document.getElementById('skillList');
+      const skills = skillList();
+      if (!skills.length) {
+        host.innerHTML = '<div class="empty-state">当前没有可配置的 skill。</div>';
+        return;
+      }
+      const grouped = skills.reduce((acc, item) => {
+        const key = String(item.category || 'general');
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(item);
+        return acc;
+      }, {});
+      host.innerHTML = Object.entries(grouped).map(([category, items]) => `
+        <div class="list-group">
+          <div class="list-group-title">${escapeHtml(CATEGORY_LABELS[category] || category)}</div>
+          ${items.map((item) => `
+            <div class="skill-item ${item.id === selectedSkillId ? 'active' : ''} ${item.enabled === false ? 'disabled' : ''}">
+              <div class="skill-item-head">
+                <button type="button" class="skill-item-main" onclick="selectSkill('${escapeHtml(item.id)}')">
+                  <div class="name"><span>${escapeHtml(item.label || item.id)}</span></div>
+                  <div class="meta">${escapeHtml(item.id)}</div>
+                </button>
+                <label class="skill-item-inline-toggle" title="启用 skill">
+                  <span class="switch-control">
+                    <input
+                      type="checkbox"
+                      ${item.enabled === false ? '' : 'checked'}
+                      onchange="toggleSkillEnabled('${escapeHtml(item.id)}', this.checked)"
+                    />
+                    <span class="switch-slider"></span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+    }
+
+    function renderSkillEditor() {
+      const host = document.getElementById('skillEditor');
+      const skill = selectedSkill();
+      if (!skill) {
+        host.innerHTML = '<div class="empty-state">请选择一个 skill。</div>';
+        return;
+      }
+      const sid = safeId(skill.id);
+      host.innerHTML = `
+        <div class="editor-head">
+          <div>
+            <h2>${escapeHtml(skill.label || skill.id)}</h2>
+            <div class="editor-desc">${escapeHtml(skill.description || '暂无说明')}</div>
+            <div class="chip-row">
+              <span class="skill-chip">${escapeHtml(skill.id)}</span>
+              <span class="skill-chip">category: ${escapeHtml(skill.category || 'general')}</span>
+            </div>
+          </div>
+          <span class="mode-badge">${skill.enabled === false ? '已禁用' : '已启用'}</span>
+        </div>
+
+        <div class="toggle-row">
+          <label class="toggle-item">
+            <span class="switch-control">
+              <input id="enabled-${sid}" type="checkbox" ${skill.enabled === false ? '' : 'checked'} />
+              <span class="switch-slider"></span>
+            </span>
+            启用 Skill
+          </label>
+          <label class="toggle-item">
+            <span class="switch-control">
+              <input id="planner-${sid}" type="checkbox" ${skill.planner_visible === false ? '' : 'checked'} />
+              <span class="switch-slider"></span>
+            </span>
+            Leader 可见
+          </label>
+          <label class="toggle-item">
+            <span class="switch-control">
+              <input id="default-${sid}" type="checkbox" ${skill.default_stage_assignment ? 'checked' : ''} />
+              <span class="switch-slider"></span>
+            </span>
+            作为阶段默认 Skill
+          </label>
+        </div>
+
+        <div class="editor-grid">
+          <div>
+            <label for="label-${sid}">显示名称</label>
+            <input id="label-${sid}" value="${escapeHtml(skill.label || skill.id)}" />
+          </div>
+
+          <div>
+            <label for="category-${sid}">分类</label>
+            <input id="category-${sid}" value="${escapeHtml(skill.category || 'general')}" />
+          </div>
+
+          <div class="full">
+            <label for="description-${sid}">描述</label>
+            <textarea id="description-${sid}">${escapeHtml(skill.description || '')}</textarea>
+          </div>
+
+          <div class="full">
+            <label for="stages-${sid}">推荐阶段</label>
+            <input id="stages-${sid}" value="${escapeHtml((skill.recommended_stage_types || []).join(', '))}" placeholder="如 requirements, coding" />
+          </div>
+
+          <div class="full">
+            <label for="prompt-${sid}">Prompt Hint</label>
+            <textarea id="prompt-${sid}" placeholder="描述这个 skill 对 agent 的思考与执行策略影响">${escapeHtml(skill.prompt_hint || '')}</textarea>
+            <div class="field-note">这段内容会进入 Leader 规划视图和运行时的 skill guidance。</div>
+          </div>
+
+          <div class="full">
+            <label for="preferred-${sid}">偏好能力</label>
+            <input id="preferred-${sid}" value="${escapeHtml((skill.preferred_capabilities || []).join(', '))}" placeholder="如 asset.generate:v1, doc.write:v1" />
+            <div class="field-note">表示这个 skill 常与哪些 capability 搭配，但 agent 仍可直接调用其它 capability。</div>
+          </div>
+
+          <div class="full">
+            <label for="required-${sid}">必需能力</label>
+            <input id="required-${sid}" value="${escapeHtml((skill.required_capabilities || []).join(', '))}" placeholder="如 doc.write:v1" />
+            <div class="field-note">表示没有这些 capability 时，这个 skill 无法完整落地。</div>
+          </div>
+
+          <div class="full callout-soft">
+            Skill 不直接执行外部动作。它主要影响 agent 的策略、约束、输出方式，以及 capability 的优先选择。
+          </div>
+        </div>
+
+        <div class="actions" style="margin-top:16px;">
+          <button type="button" class="secondary" onclick="restoreSelectedSkill()">恢复默认配置</button>
+          <button type="button" onclick="saveSkills()">保存全部配置</button>
+        </div>
+      `;
+    }
+
+    function persistCurrentEditor() {
+      const skill = selectedSkill();
+      if (!skill) return;
+      const sid = safeId(skill.id);
+      const nextSkill = {
+        ...skill,
+        label: document.getElementById(`label-${sid}`)?.value.trim() || skill.id,
+        category: document.getElementById(`category-${sid}`)?.value.trim() || 'general',
+        description: document.getElementById(`description-${sid}`)?.value.trim() || '',
+        enabled: !!document.getElementById(`enabled-${sid}`)?.checked,
+        planner_visible: !!document.getElementById(`planner-${sid}`)?.checked,
+        default_stage_assignment: !!document.getElementById(`default-${sid}`)?.checked,
+        recommended_stage_types: parseStringList(document.getElementById(`stages-${sid}`)?.value || ''),
+        prompt_hint: document.getElementById(`prompt-${sid}`)?.value.trim() || '',
+        preferred_capabilities: parseStringList(document.getElementById(`preferred-${sid}`)?.value || ''),
+        required_capabilities: parseStringList(document.getElementById(`required-${sid}`)?.value || ''),
+      };
+      skillState.catalog = skillState.catalog.map((item) => item.id === skill.id ? nextSkill : item);
+      updateSnapshot();
+    }
+
+    function selectSkill(skillId) {
+      persistCurrentEditor();
+      selectedSkillId = skillId;
+      renderSkillList();
+      renderSkillEditor();
+    }
+
+    function toggleSkillEnabled(skillId, checked) {
+      persistCurrentEditor();
+      skillState.catalog = skillState.catalog.map((item) => item.id === skillId ? { ...item, enabled: !!checked } : item);
+      updateSnapshot();
+      renderSkillList();
+      if (selectedSkillId === skillId) renderSkillEditor();
+    }
+
+    function restoreSelectedSkill() {
+      persistCurrentEditor();
+      const skill = selectedSkill();
+      if (!skill) return;
+      const defaultItem = defaultSkill(skill.id);
+      if (!defaultItem) {
+        alert('当前 skill 没有可恢复的默认配置');
+        return;
+      }
+      skillState.catalog = skillState.catalog.map((item) => item.id === skill.id ? JSON.parse(JSON.stringify(defaultItem)) : item);
+      updateSnapshot();
+      renderSkillList();
+      renderSkillEditor();
+    }
+
+    async function saveSkills() {
+      try {
+        persistCurrentEditor();
+        const resp = await fetch('/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            notes: skillState.notes || '',
+            catalog: skillState.catalog,
+          }),
+        });
+        skillState = await resp.json();
+        ensureSelectedSkill();
+        updateSnapshot();
+        renderSkillList();
+        renderSkillEditor();
+      } catch (error) {
+        alert(error.message || '保存失败');
+      }
+    }
+
+    async function loadAll() {
+      const resp = await fetch('/skills');
+      skillState = await resp.json();
+      ensureSelectedSkill();
+      updateSnapshot();
+      renderSkillList();
+      renderSkillEditor();
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>

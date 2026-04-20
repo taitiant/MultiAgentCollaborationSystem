@@ -5,194 +5,63 @@ import db
 import json
 import re
 import shutil
-from pathlib import PurePosixPath
 from typing import Dict, Any, List, Callable, Optional
 from langgraph.graph import StateGraph
 from langgraph.graph import END
 
 from core import Task, SystemState, new_event
 from adapters.model_registry import ModelRegistry
+from domains.software_dev.agents.asset_agent import AssetAgent
+from domains.software_dev.agents.document_agents import ArchAgent, DocAgent, ReqAgent
 from domains.software_dev.agents.patch_agent import PatchAgent
 from domains.software_dev.agents.test_agent import TestAgent
-from orchestration.collaboration import CollaborationHub, append_prompt_with_runtime_context
+from orchestration.capability_invoker import (
+    build_capability_invoke_prompt,
+    build_requested_capability_execution,
+    extract_capability_invocations,
+)
+from orchestration.capability_registry import capability_prompt_view, merge_capability_settings
+from orchestration.capability_runtime import CapabilityRuntime
+from orchestration.collaboration import CollaborationHub
+from orchestration.document_rules import (
+    _architecture_validation_issues,
+    _docs_validation_issues,
+    _extract_architecture_file_list,
+    _extract_file_paths_from_lines,
+    _infer_declared_stack,
+    _infer_project_stack,
+    _normalize_architecture_file_list,
+    _normalize_architecture_markdown,
+)
+from orchestration.mcp_registry import merge_mcp_settings
 from orchestration.file_utils import write_text, ensure_workspace
+from orchestration.stage_catalog import (
+    DEFAULT_BLOCKING_REVIEW_STAGE_TYPES,
+    REFERENCE_FLOW_PRESETS,
+    STAGE_EXECUTOR_TYPES,
+    TEXT_OUTPUT_QUALITY_GUARDRAIL,
+    build_stage_type_blueprints,
+    normalize_execution_profile,
+    normalize_stage_semantics,
+    normalize_stage_type,
+    resolve_stage_execution_profile,
+    resolve_stage_semantics,
+)
+from orchestration.skill_registry import (
+    build_skill_runtime_context,
+    merge_skill_settings,
+    skill_prompt_view,
+)
+from orchestration.workflow_plan import (
+    _build_fallback_plan,
+    _make_stage_instance,
+    _normalize_stage_plan,
+    resolve_conversation_groups,
+    write_leader_plan_snapshot,
+)
 from orchestration.workspace_cleanup import cleanup_architecture_orphan_files
 from core import AgentMessage
 from storage.file_store import FileStore
-
-DEFAULT_STAGE_PROMPTS = {
-    "requirements": (
-        "你是需求分析师。基于用户需求输出严格的需求文档。\n"
-        "需求：{spec}\n"
-        "输出 Markdown，必须包含：\n"
-        "1) 功能需求\n2) 非功能需求\n3) 验收标准\n4) 边界与约束\n"
-        "禁止输出架构设计、目录结构、代码文件规划。"
-    ),
-    "architecture": (
-        "你是架构设计师。基于需求文档设计系统架构与文件结构。\n"
-        "原始需求：{spec}\n"
-        "输出 Markdown，必须包含：\n"
-        "1) 架构分层说明\n2) 模块职责\n3) 接口/数据流\n"
-        "4) 一个标题为“## 文件清单”的章节，按每行一个相对路径列出文件（可包含深层目录），例如 code/api/app.py。\n"
-        "不要输出实现代码。"
-    ),
-    "coding": (
-        "你是编码工程师。请基于需求与架构文档，为指定文件生成内容。\n"
-        "需求：{spec}\n"
-        "必须遵循架构文档中的文件路径和职责，不得擅自改动路径。"
-    ),
-    "testing": (
-        "你是测试工程师。请基于需求、设计和现有实现执行验证。\n"
-        "需求：{spec}\n"
-        "优先覆盖主流程、关键边界和最近改动带来的回归风险。"
-    ),
-    "docs": (
-        "你是文档工程师。请基于当前项目实现与测试结果生成 README。\n"
-        "需求：{spec}\n"
-        "输出应包含运行方式、配置、输入输出示例、限制说明。"
-    ),
-}
-
-DEFAULT_ACCEPTANCE_CRITERIA = {
-    "requirements": "需求范围、约束、验收标准明确，没有越界到架构或实现细节。",
-    "architecture": "架构方案可支撑需求实现，并给出清晰可执行的文件清单。",
-    "coding": "实现与需求和设计一致，生成代码可通过基础语法/冒烟校验。",
-    "testing": "测试结果能覆盖关键功能与主要风险，并明确记录失败原因或回退结论。",
-    "docs": "交付文档说明清晰，覆盖运行方式、配置、限制与验证结果。",
-}
-
-ARCHITECTURE_FILE_LIST_HINT = (
-    "\n\n输出要求补充：必须包含标题为“## 文件清单”的章节，"
-    "并按每行一个相对路径列出待实现文件（例如 code/main.py、code/game/board.py）。"
-)
-
-TEXT_OUTPUT_QUALITY_GUARDRAIL = (
-    "\n\n输出前自检：\n"
-    "- 通读全文一遍，修正明显错别字、漏字、残句和重复标点。\n"
-    "- 不要出现“少一个字”“半句话断掉”“重复两个标点”这类低级文本问题。\n"
-    "- 保持标题、列表、路径和术语前后一致。"
-)
-
-DEFAULT_BLOCKING_REVIEW_STAGE_TYPES = {"requirements", "architecture", "docs"}
-ARCHITECTURE_FILE_SECTION_TOKENS = ("文件清单", "文件列表")
-ARCHITECTURE_FILE_SECTION_COMPAT_TOKENS = (
-    "文件清单",
-    "文件列表",
-    "文件单",
-    "文件目录",
-    "目录清单",
-)
-ARCHITECTURE_ROOT_FILES = {
-    "index.html", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-    "tsconfig.json", "tsconfig.app.json", "vite.config.ts", "vite.config.js",
-    "requirements.txt", "pyproject.toml", "setup.py", "README.md",
-}
-PRESERVED_WORKSPACE_PREFIXES = ("analysis/", "design/", "docs/", "plan/", "logs/", "tests/")
-WEB_ROOT_MANAGED_PREFIXES = ("src/", "public/", "assets/", "scripts/", "styles/")
-WEB_ROOT_MANAGED_FILES = {
-    "index.html",
-    "style.css",
-    "script.js",
-    "package.json",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "tsconfig.json",
-    "tsconfig.app.json",
-    "vite.config.ts",
-    "vite.config.js",
-}
-WEB_STACK_EXTENSIONS = {"html", "css", "scss", "js", "jsx", "ts", "tsx"}
-PYTHON_STACK_EXTENSIONS = {"py"}
-NEUTRAL_STACK_EXTENSIONS = {"md", "txt", "json", "yaml", "yml", "toml", "ini", "sh"}
-ARCHITECTURE_PATH_PATTERN = re.compile(
-    r"(?P<path>(?:\.?/)?(?:[\w\-]+/)*[\w\-.]+\.[A-Za-z0-9]+|(?:\.?/)?(?:[\w\-]+/)+)"
-)
-
-STAGE_TYPE_ALIASES = {
-    "requirements": "requirements",
-    "requirement": "requirements",
-    "analysis": "requirements",
-    "analyst": "requirements",
-    "clarification": "requirements",
-    "clarify": "requirements",
-    "scope": "requirements",
-    "product": "requirements",
-    "planning": "requirements",
-    "需求": "requirements",
-    "需求分析": "requirements",
-    "需求澄清": "requirements",
-    "architecture": "architecture",
-    "arch": "architecture",
-    "design": "architecture",
-    "solution": "architecture",
-    "solution_design": "architecture",
-    "technical_design": "architecture",
-    "架构": "architecture",
-    "设计": "architecture",
-    "方案": "architecture",
-    "coding": "coding",
-    "code": "coding",
-    "implementation": "coding",
-    "implement": "coding",
-    "develop": "coding",
-    "development": "coding",
-    "build": "coding",
-    "patch": "coding",
-    "fix": "coding",
-    "bugfix": "coding",
-    "repair": "coding",
-    "编码": "coding",
-    "开发": "coding",
-    "实现": "coding",
-    "修复": "coding",
-    "testing": "testing",
-    "test": "testing",
-    "qa": "testing",
-    "verification": "testing",
-    "verify": "testing",
-    "validation": "testing",
-    "review": "testing",
-    "验收": "testing",
-    "测试": "testing",
-    "验证": "testing",
-    "docs": "docs",
-    "doc": "docs",
-    "documentation": "docs",
-    "readme": "docs",
-    "handoff": "docs",
-    "交付": "docs",
-    "文档": "docs",
-    "说明": "docs",
-}
-
-STAGE_EXECUTOR_TYPES = {"requirements", "architecture", "coding", "testing", "docs"}
-
-
-def _normalize_conversation_group(value: Any) -> Dict[str, Any] | None:
-    if not value:
-        return None
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        return {"key": raw, "label": raw}
-    if not isinstance(value, dict):
-        return None
-    raw_key = value.get("key") or value.get("id") or value.get("name")
-    if not raw_key:
-        return None
-    key = str(raw_key).strip()
-    if not key:
-        return None
-    normalized = {
-        "key": key,
-        "label": str(value.get("label") or value.get("title") or key).strip() or key,
-    }
-    kind = str(value.get("kind") or value.get("type") or "").strip()
-    if kind:
-        normalized["kind"] = kind
-    return normalized
 
 
 def _emit_stage_progress(progress_callback: Optional[Callable[[Dict[str, Any]], None]], **payload: Any) -> None:
@@ -337,384 +206,12 @@ def _load_task_artifact_text(task: Task, rel_path: str) -> str:
         return ""
 
 
-def _is_architecture_file_section_heading(line: str) -> bool:
-    heading = str(line or "").strip()
-    if not heading.startswith("## "):
-        return False
-    title = heading[3:].strip().replace("：", "").replace(":", "").replace(" ", "")
-    if not title or "文件" not in title:
-        return False
-    if any(token in title for token in ARCHITECTURE_FILE_SECTION_TOKENS):
-        return True
-    if any(token in title for token in ARCHITECTURE_FILE_SECTION_COMPAT_TOKENS):
-        return True
-    return False
-
-
-def _find_architecture_file_sections(text: str) -> tuple[list[str], list[tuple[int, int]]]:
-    lines = text.splitlines()
-    sections: list[tuple[int, int]] = []
-    start: int | None = None
-    for idx, raw in enumerate(lines):
-        line = raw.strip()
-        if _is_architecture_file_section_heading(line):
-            if start is not None:
-                sections.append((start, idx))
-            start = idx
-            continue
-        if start is not None and line.startswith("## "):
-            sections.append((start, idx))
-            start = None
-    if start is not None:
-        sections.append((start, len(lines)))
-    return lines, sections
-
-
-def _extract_file_paths_from_lines(lines: list[str]) -> list[str]:
-    candidates: list[str] = []
-    seen = set()
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            continue
-        match = ARCHITECTURE_PATH_PATTERN.search(line.replace("`", ""))
-        if not match:
-            continue
-        path = match.group("path").strip().lstrip("./").replace("\\", "/")
-        if not path or path.startswith("/") or path.startswith(".."):
-            continue
-        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-        if "/" not in path and "." not in path and path not in ARCHITECTURE_ROOT_FILES:
-            continue
-        if ext and ext not in WEB_STACK_EXTENSIONS | PYTHON_STACK_EXTENSIONS | NEUTRAL_STACK_EXTENSIONS:
-            continue
-        if path not in seen:
-            seen.add(path)
-            candidates.append(path)
-    return candidates
-
-
-def _extract_architecture_file_list(text: str) -> list[str]:
-    lines, sections = _find_architecture_file_sections(text)
-    candidates: list[str] = []
-    seen = set()
-    for start, end in sections:
-        for path in _extract_file_paths_from_lines(lines[start + 1:end]):
-            if path not in seen:
-                seen.add(path)
-                candidates.append(path)
-    return candidates
-
-
-def _normalize_project_implementation_path(path: str, project_stack: str) -> str:
-    normalized = str(path or "").strip().lstrip("./").replace("\\", "/")
-    if not normalized:
-        return ""
-    if normalized.startswith(("code/", "app/")):
-        return normalized
-    if normalized.startswith(PRESERVED_WORKSPACE_PREFIXES):
-        return normalized
-    if project_stack != "web":
-        return normalized
-    if normalized.startswith(WEB_ROOT_MANAGED_PREFIXES):
-        return f"code/{normalized}"
-    name = PurePosixPath(normalized).name
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if "/" not in normalized and (normalized in WEB_ROOT_MANAGED_FILES or ext in WEB_STACK_EXTENSIONS):
-        return f"code/{normalized}"
-    return normalized
-
-
-def _normalize_architecture_file_list(paths: list[str], project_stack: str) -> list[str]:
-    normalized: list[str] = []
-    seen = set()
-    for path in paths:
-        candidate = _normalize_project_implementation_path(path, project_stack)
-        if not candidate or candidate in seen:
-            continue
-        seen.add(candidate)
-        normalized.append(candidate)
-    return normalized
-
-
-def _classify_architecture_path(path: str) -> str:
-    normalized = str(path or "").strip().lower().replace("\\", "/")
-    ext = normalized.rsplit(".", 1)[-1] if "." in normalized else ""
-    if (
-        normalized in {"index.html", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json", "tsconfig.app.json", "vite.config.ts", "vite.config.js"}
-        or normalized.startswith(("src/", "public/"))
-        or ext in WEB_STACK_EXTENSIONS
-    ):
-        return "web"
-    if (
-        normalized in {"requirements.txt", "pyproject.toml", "setup.py"}
-        or ext in PYTHON_STACK_EXTENSIONS
-        or normalized.startswith(("code/", "app/"))
-    ):
-        return "python"
-    return "neutral"
-
-
-def _stack_keyword_scores(*texts: str) -> tuple[int, int]:
-    merged = "\n".join(str(text or "") for text in texts).lower()
-    web_score = 0
-    python_score = 0
-    for token in ("浏览器", "web", "html", "canvas", "vite", "typescript", "javascript", "esm", "package.json", "前端"):
-        if token in merged:
-            web_score += 1
-    for token in ("python", "pygame", "requirements.txt", "pyproject", "pip", "命令行"):
-        if token in merged:
-            python_score += 1
-    return web_score, python_score
-
-
-def _infer_declared_stack(text: str, *, fallback: str | None = None) -> str | None:
-    web_score, python_score = _stack_keyword_scores(text)
-    if web_score == python_score:
-        return fallback
-    return "web" if web_score > python_score else "python"
-
-
-def _infer_project_stack(spec: str, requirements_text: str, arch_text: str, candidates: list[str] | None = None) -> str:
-    merged = "\n".join([str(spec or ""), str(requirements_text or ""), str(arch_text or "")]).lower()
-    web_score, python_score = _stack_keyword_scores(spec, requirements_text, arch_text)
-    for path in candidates or _extract_architecture_file_list(arch_text):
-        stack = _classify_architecture_path(path)
-        if stack == "web":
-            web_score += 2
-        elif stack == "python":
-            python_score += 2
-    if web_score > python_score:
-        return "web"
-    if python_score > web_score:
-        return "python"
-    return "web" if any(token in merged for token in ("俄罗斯方块", "tetris", "canvas", "浏览器")) else "python"
-
-
-def _fallback_architecture_file_list(project_stack: str) -> list[str]:
-    if project_stack == "web":
-        return [
-            "code/package.json",
-            "code/index.html",
-            "code/src/main.ts",
-            "code/src/game/board.ts",
-            "code/src/game/pieces.ts",
-            "code/src/game/game.ts",
-            "code/src/render/renderer.ts",
-            "code/src/input/keyboard.ts",
-            "code/src/styles.css",
-            "docs/README.md",
-        ]
-    return [
-        "requirements.txt",
-        "code/main.py",
-        "code/game/__init__.py",
-        "code/game/constants.py",
-        "code/game/tetromino.py",
-        "code/game/board.py",
-        "code/game/game.py",
-        "code/game/renderer.py",
-        "tests/test_board.py",
-        "docs/README.md",
-    ]
-
-
-def _select_architecture_file_list(candidates: list[str], project_stack: str) -> list[str]:
-    if not candidates:
-        return _fallback_architecture_file_list(project_stack)
-    selected = [path for path in candidates if _classify_architecture_path(path) in {project_stack, "neutral"}]
-    if not any(_classify_architecture_path(path) == project_stack for path in selected):
-        selected = [path for path in candidates if _classify_architecture_path(path) != ("python" if project_stack == "web" else "web")]
-    selected = selected or candidates
-    return _normalize_architecture_file_list(selected, project_stack)
-
-
-def _strip_architecture_file_sections(text: str) -> str:
-    lines, sections = _find_architecture_file_sections(text)
-    if not sections:
-        return text.rstrip()
-    kept: list[str] = []
-    cursor = 0
-    for start, end in sections:
-        kept.extend(lines[cursor:start])
-        cursor = end
-    kept.extend(lines[cursor:])
-    while kept and not kept[-1].strip():
-        kept.pop()
-    return "\n".join(kept).rstrip()
-
-
-def _normalize_architecture_markdown(spec: str, requirements_text: str, arch_text: str) -> str:
-    candidates = _extract_architecture_file_list(arch_text)
-    project_stack = _infer_declared_stack(requirements_text) or _infer_project_stack(spec, requirements_text, arch_text, candidates)
-    selected = _select_architecture_file_list(candidates, project_stack)
-    selected = list(dict.fromkeys(selected))
-    base = _strip_architecture_file_sections(arch_text)
-    section = "## 文件清单\n" + "\n".join(selected)
-    if not base.strip():
-        return section + "\n"
-    return base.rstrip() + "\n\n" + section + "\n"
-
-
-def _architecture_validation_issues(spec: str, requirements_text: str, arch_text: str) -> list[str]:
-    lines, sections = _find_architecture_file_sections(arch_text)
-    candidates = _extract_architecture_file_list(arch_text)
-    issues: list[str] = []
-    if len(sections) != 1:
-        issues.append("架构文档应只保留一个“## 文件清单”章节。")
-    if not candidates:
-        issues.append("架构文档缺少可提取的文件路径清单。")
-        return issues
-    project_stack = _infer_project_stack(spec, requirements_text, arch_text, candidates)
-    candidates = _normalize_architecture_file_list(candidates, project_stack)
-    required_stack = _infer_declared_stack(requirements_text)
-    web_paths = [path for path in candidates if _classify_architecture_path(path) == "web"]
-    python_paths = [path for path in candidates if _classify_architecture_path(path) == "python"]
-    if web_paths and python_paths:
-        issues.append("文件清单同时混入了 Web/TS 与 Python 两套技术栈。")
-    if required_stack and required_stack != project_stack:
-        issues.append(f"架构方案未遵循上游需求已给定的默认技术栈：需求偏向 {required_stack}，当前架构却偏向 {project_stack}。")
-    if project_stack == "web":
-        if python_paths:
-            issues.append("当前需求更接近 Web 交付，但文件清单仍包含 Python 项目路径。")
-        if not any(path.lower().endswith(".html") for path in candidates):
-            issues.append("Web 方案文件清单缺少 HTML 入口文件。")
-    if project_stack == "python" and web_paths:
-        issues.append("当前需求更接近 Python 交付，但文件清单仍包含前端工程路径。")
-    return issues
-
-
-def _docs_validation_issues(readme_text: str) -> list[str]:
-    text = str(readme_text or "")
-    normalized = text.lower()
-    issues: list[str] = []
-    if not normalized.strip():
-        return ["README 内容为空。"]
-
-    section_groups = {
-        "运行方式": ("启动方式", "运行方式", "如何运行"),
-        "文件结构": ("文件结构", "项目结构", "目录结构"),
-        "限制说明": ("限制", "注意事项", "已知问题"),
-        "测试结论": ("测试", "验证结论", "测试/验证", "验证结果"),
-    }
-    for label, tokens in section_groups.items():
-        if not any(token.lower() in normalized for token in tokens):
-            issues.append(f"README 缺少“{label}”相关章节或说明。")
-    if "python" not in normalized and "pip install" not in normalized:
-        issues.append("README 未清晰说明基础运行环境或依赖安装方式。")
-    return issues
-
-
 def _review_feedback_is_evidence_limited(feedback_text: str) -> bool:
     text = str(feedback_text or "")
     if not text:
         return False
     uncertain_markers = ("无法确认", "尚不能确认", "证据不足", "未见", "可能缺少", "大概率", "当前可见证据")
     return any(marker in text for marker in uncertain_markers)
-
-STAGE_TYPE_BLUEPRINTS = {
-    "requirements": {
-        "name": "requirements",
-        "stage_type": "requirements",
-        "label": "需求分析",
-        "role": "需求分析师",
-        "capabilities": ["analysis.requirements:v1"],
-        "prompt_template": DEFAULT_STAGE_PROMPTS["requirements"],
-        "acceptance_criteria": DEFAULT_ACCEPTANCE_CRITERIA["requirements"],
-        "human_checkpoint": False,
-    },
-    "architecture": {
-        "name": "architecture",
-        "stage_type": "architecture",
-        "label": "架构设计",
-        "role": "架构设计师",
-        "capabilities": ["design.arch:v1"],
-        "prompt_template": DEFAULT_STAGE_PROMPTS["architecture"],
-        "acceptance_criteria": DEFAULT_ACCEPTANCE_CRITERIA["architecture"],
-        "human_checkpoint": False,
-    },
-    "coding": {
-        "name": "coding",
-        "stage_type": "coding",
-        "label": "编码实现",
-        "role": "软件工程师",
-        "capabilities": ["code.edit:v1"],
-        "prompt_template": DEFAULT_STAGE_PROMPTS["coding"],
-        "acceptance_criteria": DEFAULT_ACCEPTANCE_CRITERIA["coding"],
-        "human_checkpoint": False,
-    },
-    "testing": {
-        "name": "testing",
-        "stage_type": "testing",
-        "label": "测试验证",
-        "role": "测试工程师",
-        "capabilities": ["test.run:v1"],
-        "prompt_template": DEFAULT_STAGE_PROMPTS["testing"],
-        "acceptance_criteria": DEFAULT_ACCEPTANCE_CRITERIA["testing"],
-        "human_checkpoint": False,
-    },
-    "docs": {
-        "name": "docs",
-        "stage_type": "docs",
-        "label": "文档交付",
-        "role": "文档工程师",
-        "capabilities": ["doc.write:v1"],
-        "prompt_template": DEFAULT_STAGE_PROMPTS["docs"],
-        "acceptance_criteria": DEFAULT_ACCEPTANCE_CRITERIA["docs"],
-        "human_checkpoint": False,
-    },
-}
-
-REFERENCE_FLOW_PRESETS = {
-    "lightweight": [
-        {"name": "requirements", "stage_type": "requirements", "label": "任务澄清", "role": "需求分析师"},
-        {"name": "solution_design", "stage_type": "architecture", "label": "实现方案", "role": "方案设计师"},
-        {"name": "implementation", "stage_type": "coding", "label": "编码实现", "role": "软件工程师"},
-        {"name": "verification", "stage_type": "testing", "label": "验证测试", "role": "测试工程师"},
-    ],
-    "standard": [
-        {"name": "requirements", "stage_type": "requirements", "label": "需求分析", "role": "需求分析师"},
-        {"name": "architecture", "stage_type": "architecture", "label": "架构设计", "role": "架构设计师"},
-        {"name": "implementation", "stage_type": "coding", "label": "编码实现", "role": "软件工程师"},
-        {"name": "verification", "stage_type": "testing", "label": "测试验证", "role": "测试工程师"},
-        {"name": "documentation", "stage_type": "docs", "label": "交付文档", "role": "文档工程师"},
-    ],
-    "deep": [
-        {"name": "requirements", "stage_type": "requirements", "label": "需求拆解", "role": "产品分析师"},
-        {"name": "architecture", "stage_type": "architecture", "label": "技术方案", "role": "技术架构师"},
-        {"name": "core_implementation", "stage_type": "coding", "label": "核心实现", "role": "主程工程师"},
-        {"name": "system_verification", "stage_type": "testing", "label": "系统验证", "role": "测试工程师"},
-        {"name": "release_docs", "stage_type": "docs", "label": "交付说明", "role": "文档工程师"},
-    ],
-}
-
-
-def normalize_stage_type(stage_type: str | None) -> str:
-    raw = str(stage_type or "").strip().lower()
-    if not raw:
-        return "requirements"
-    if raw in STAGE_TYPE_ALIASES:
-        return STAGE_TYPE_ALIASES[raw]
-    slug = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_")
-    if slug in STAGE_TYPE_ALIASES:
-        return STAGE_TYPE_ALIASES[slug]
-    return slug or "requirements"
-
-
-def stage_prompt_key(stage_name: str, stage_type: str | None = None) -> str:
-    if stage_name in DEFAULT_STAGE_PROMPTS:
-        return stage_name
-    normalized = normalize_stage_type(stage_type or stage_name)
-    return normalized if normalized in DEFAULT_STAGE_PROMPTS else stage_name
-
-
-def render_stage_prompt(stage_name: str, spec: str, override_prompt: str | None = None, stage_type: str | None = None) -> str:
-    prompt_key = stage_prompt_key(stage_name, stage_type=stage_type)
-    template = override_prompt or DEFAULT_STAGE_PROMPTS.get(prompt_key, "{spec}")
-    try:
-        return template.format(spec=spec)
-    except Exception:
-        return template
 
 
 def _extract_json_block(text: str) -> Dict[str, Any] | None:
@@ -736,269 +233,6 @@ def _extract_json_block(text: str) -> Dict[str, Any] | None:
         except Exception:
             return None
     return None
-
-
-def _slugify_stage_name(value: str | None, fallback: str) -> str:
-    raw = str(value or "").strip().lower()
-    slug = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_")
-    return slug or fallback
-
-
-def _stage_blueprint(stage_type: str) -> Dict[str, Any]:
-    normalized = normalize_stage_type(stage_type)
-    blueprint = dict(STAGE_TYPE_BLUEPRINTS.get(normalized) or STAGE_TYPE_BLUEPRINTS["requirements"])
-    blueprint["stage_type"] = normalized
-    return blueprint
-
-
-def _estimate_task_complexity(spec: str) -> str:
-    raw = str(spec or "")
-    text = raw.lower()
-    simple_hits = sum(1 for token in ["简单", "demo", "小游戏", "单页", "脚本", "样例", "mvp", "原型"] if token in raw or token in text)
-    complex_hits = sum(1 for token in ["系统", "平台", "工作流", "多角色", "数据库", "权限", "部署", "接口", "后台", "前端", "协同", "langgraph", "agent", "多智能体"] if token in raw or token in text)
-    if len(raw) > 220:
-        complex_hits += 1
-    if len(raw) < 80:
-        simple_hits += 1
-    if complex_hits >= 3:
-        return "complex"
-    if simple_hits >= 2 and complex_hits == 0:
-        return "simple"
-    return "standard"
-
-
-def _make_stage_instance(stage_type: str, spec: str, name: str | None = None, used_names: set[str] | None = None, **overrides: Any) -> Dict[str, Any]:
-    stage = _stage_blueprint(stage_type)
-    fallback_name = stage["name"] if isinstance(stage.get("name"), str) else stage_type
-    base_name = _slugify_stage_name(name or overrides.get("name") or stage.get("label"), fallback=fallback_name)
-    used = used_names if used_names is not None else set()
-    unique_name = base_name
-    suffix = 2
-    while unique_name in used:
-        unique_name = f"{base_name}_{suffix}"
-        suffix += 1
-    used.add(unique_name)
-    stage_name = unique_name
-    stage["name"] = stage_name
-    stage["stage_type"] = normalize_stage_type(stage_type)
-    stage["label"] = str(overrides.get("label") or stage.get("label") or stage_name)
-    stage["role"] = str(overrides.get("role") or stage.get("role") or f"{stage['stage_type']}-agent")
-    prompt_override = overrides.get("prompt_template")
-    stage["prompt_template"] = render_stage_prompt(stage_name, spec, prompt_override if isinstance(prompt_override, str) else None, stage_type=stage["stage_type"])
-    stage["acceptance_criteria"] = str(overrides.get("acceptance_criteria") or stage.get("acceptance_criteria") or DEFAULT_ACCEPTANCE_CRITERIA.get(stage["stage_type"], ""))
-    caps = overrides.get("capabilities")
-    stage["capabilities"] = list(caps) if isinstance(caps, list) and caps else list(stage.get("capabilities") or [])
-    stage["human_checkpoint"] = bool(overrides.get("human_checkpoint", stage.get("human_checkpoint", False)))
-    depends_on = overrides.get("depends_on")
-    stage["depends_on"] = [str(dep) for dep in depends_on if dep] if isinstance(depends_on, list) else []
-    conversation_group = _normalize_conversation_group(
-        overrides.get("conversation_group")
-        or overrides.get("group_key")
-        or overrides.get("group")
-        or overrides.get("loop_group")
-        or overrides.get("collaboration_group")
-    )
-    if conversation_group:
-        stage["conversation_group"] = conversation_group
-    if stage["stage_type"] == "architecture" and "文件清单" not in str(stage.get("prompt_template") or ""):
-        stage["prompt_template"] = (str(stage["prompt_template"]).strip() + ARCHITECTURE_FILE_LIST_HINT).strip()
-    return stage
-
-
-def _ensure_stage_prerequisites(stages: List[Dict[str, Any]], spec: str) -> List[Dict[str, Any]]:
-    result = [dict(stage) for stage in stages if isinstance(stage, dict) and stage.get("name")]
-    used_names = {str(stage.get("name")) for stage in result if stage.get("name")}
-
-    def has_prior(before_index: int, stage_type: str) -> bool:
-        normalized = normalize_stage_type(stage_type)
-        return any(normalize_stage_type(stage.get("stage_type") or stage.get("name")) == normalized for stage in result[:before_index])
-
-    def insert_before(before_index: int, stage_type: str, label: str | None = None) -> int:
-        if has_prior(before_index, stage_type):
-            return before_index
-        auto_stage = _make_stage_instance(stage_type, spec, used_names=used_names, label=label)
-        result.insert(before_index, auto_stage)
-        return before_index + 1
-
-    idx = 0
-    while idx < len(result):
-        stage_type = normalize_stage_type(result[idx].get("stage_type") or result[idx].get("name"))
-        if stage_type == "architecture":
-            idx = insert_before(idx, "requirements", label="自动补全需求")
-        elif stage_type == "coding":
-            idx = insert_before(idx, "requirements", label="自动补全需求")
-            idx = insert_before(idx, "architecture", label="自动补全方案")
-        elif stage_type == "testing":
-            idx = insert_before(idx, "requirements", label="自动补全需求")
-            idx = insert_before(idx, "architecture", label="自动补全方案")
-            idx = insert_before(idx, "coding", label="自动补全实现")
-        elif stage_type == "docs" and any(normalize_stage_type(item.get("stage_type") or item.get("name")) == "coding" for item in result):
-            idx = insert_before(idx, "requirements", label="自动补全需求")
-            idx = insert_before(idx, "architecture", label="自动补全方案")
-            idx = insert_before(idx, "coding", label="自动补全实现")
-        idx += 1
-
-    all_names = {str(stage.get("name")) for stage in result if stage.get("name")}
-    for i, stage in enumerate(result):
-        raw_deps = stage.get("depends_on") if isinstance(stage.get("depends_on"), list) else []
-        deps = [str(dep) for dep in raw_deps if dep in all_names and dep != stage.get("name")]
-        stage["depends_on"] = deps or ([str(result[i - 1].get("name"))] if i > 0 else [])
-        stage["stage_type"] = normalize_stage_type(stage.get("stage_type") or stage.get("name"))
-    return result
-
-
-def _normalize_stage_plan(raw_stages: List[Dict[str, Any]], spec: str) -> List[Dict[str, Any]]:
-    planned: List[Dict[str, Any]] = []
-    used_names: set[str] = set()
-    for idx, item in enumerate(raw_stages or [], start=1):
-        if not isinstance(item, dict):
-            continue
-        stage_type = normalize_stage_type(item.get("stage_type") or item.get("executor_type") or item.get("name") or item.get("label"))
-        if stage_type not in STAGE_EXECUTOR_TYPES:
-            continue
-        stage = _make_stage_instance(
-            stage_type,
-            spec,
-            name=item.get("name") or item.get("id") or item.get("label") or f"{stage_type}_{idx}",
-            used_names=used_names,
-            label=item.get("label"),
-            role=item.get("role"),
-            prompt_template=item.get("prompt_template"),
-            capabilities=item.get("capabilities"),
-            acceptance_criteria=item.get("acceptance_criteria"),
-            human_checkpoint=item.get("human_checkpoint"),
-            depends_on=item.get("depends_on"),
-            conversation_group=item.get("conversation_group") or item.get("group_key") or item.get("group") or item.get("loop_group") or item.get("collaboration_group"),
-        )
-        planned.append(stage)
-    return _ensure_stage_prerequisites(planned, spec) if planned else []
-
-
-def resolve_conversation_groups(stages: List[Dict[str, Any]], raw_groups: Any = None) -> List[Dict[str, Any]]:
-    normalized_stages = [stage for stage in (stages or []) if isinstance(stage, dict) and stage.get("name")]
-    stage_names = [str(stage.get("name")) for stage in normalized_stages if stage.get("name")]
-    stage_map = {str(stage.get("name")): stage for stage in normalized_stages if stage.get("name")}
-    groups: List[Dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    grouped_stage_names: set[str] = set()
-
-    def add_group(key: str, label: str, members: List[str], kind: str = "stage_flow") -> None:
-        clean_members = [name for name in members if name in stage_map]
-        if not key or not clean_members or key in seen_keys:
-            return
-        seen_keys.add(key)
-        groups.append({
-            "key": key,
-            "label": label or key,
-            "kind": kind or "stage_flow",
-            "stage_names": clean_members,
-        })
-        grouped_stage_names.update(clean_members)
-
-    if isinstance(raw_groups, list):
-        for item in raw_groups:
-            normalized = _normalize_conversation_group(item)
-            if not normalized or not isinstance(item, dict):
-                continue
-            raw_members = item.get("stage_names") or item.get("stages") or item.get("members") or []
-            members = [str(name) for name in raw_members if str(name) in stage_map] if isinstance(raw_members, list) else []
-            add_group(normalized["key"], normalized["label"], members, str(normalized.get("kind") or "stage_flow"))
-
-    for stage in normalized_stages:
-        group_cfg = _normalize_conversation_group(
-            stage.get("conversation_group")
-            or stage.get("group_key")
-            or stage.get("group")
-            or stage.get("loop_group")
-            or stage.get("collaboration_group")
-        )
-        if not group_cfg:
-            continue
-        existing = next((group for group in groups if group["key"] == group_cfg["key"]), None)
-        if existing:
-            if stage["name"] not in existing["stage_names"]:
-                existing["stage_names"].append(stage["name"])
-                grouped_stage_names.add(stage["name"])
-            continue
-        add_group(group_cfg["key"], group_cfg["label"], [stage["name"]], str(group_cfg.get("kind") or "stage_flow"))
-
-    current_chain: List[str] = []
-    for stage in normalized_stages:
-        stage_name = str(stage["name"])
-        if stage_name in grouped_stage_names:
-            if len(current_chain) > 1:
-                add_group(
-                    f"flow:{current_chain[0]}:{current_chain[-1]}",
-                    "开发闭环",
-                    current_chain[:],
-                    "loop",
-                )
-            current_chain = []
-            continue
-        stage_type = normalize_stage_type(stage.get("stage_type") or stage_name)
-        if stage_type in {"coding", "testing"}:
-            current_chain.append(stage_name)
-        else:
-            if len(current_chain) > 1:
-                add_group(
-                    f"flow:{current_chain[0]}:{current_chain[-1]}",
-                    "开发闭环",
-                    current_chain[:],
-                    "loop",
-                )
-            current_chain = []
-    if len(current_chain) > 1:
-        add_group(
-            f"flow:{current_chain[0]}:{current_chain[-1]}",
-            "开发闭环",
-            current_chain[:],
-            "loop",
-        )
-
-    for stage_name in stage_names:
-        if stage_name in grouped_stage_names:
-            continue
-        stage = stage_map[stage_name]
-        add_group(stage_name, str(stage.get("label") or stage_name), [stage_name], "stage")
-
-    group_index = {group["key"]: group for group in groups}
-    for stage in normalized_stages:
-        stage_name = str(stage["name"])
-        matched = next((group for group in groups if stage_name in group["stage_names"]), None)
-        if matched:
-            stage["conversation_group"] = {
-                "key": matched["key"],
-                "label": matched["label"],
-                "kind": matched.get("kind") or "stage_flow",
-            }
-    return groups
-
-
-def write_leader_plan_snapshot(task: Task, base_dir: str, leader_plan: Dict[str, Any]) -> str:
-    workspace = os.path.abspath(task.workspace_path or os.path.join(base_dir, task.task_id))
-    plan_dir = os.path.join(workspace, "plan")
-    os.makedirs(plan_dir, exist_ok=True)
-    plan_path = os.path.join(plan_dir, "leader_plan.json")
-    with open(plan_path, "w", encoding="utf-8") as f:
-        json.dump(leader_plan or {}, f, ensure_ascii=False, indent=2)
-    return plan_path
-
-
-def _build_fallback_plan(spec: str) -> Dict[str, Any]:
-    complexity = _estimate_task_complexity(spec)
-    preset_name = "lightweight" if complexity == "simple" else "deep" if complexity == "complex" else "standard"
-    stages = _normalize_stage_plan(REFERENCE_FLOW_PRESETS.get(preset_name, []), spec)
-    summary_map = {
-        "simple": "任务偏简单，采用精简流程，避免过度设计。",
-        "standard": "任务复杂度中等，采用需求→方案→实现→测试→交付的标准闭环。",
-        "complex": "任务复杂度较高，采用更稳健的多阶段研发流程。",
-    }
-    return {
-        "complexity": complexity,
-        "reference_preset": preset_name,
-        "summary": summary_map.get(complexity, "采用标准执行流程。"),
-        "stages": stages,
-    }
 
 
 def _infer_provider_type(base_url: str, model_name: str = "") -> str:
@@ -1035,192 +269,54 @@ def _registry_provider_cfg(provider_id: str, model_row: Dict[str, Any], cred: Di
     return cfg
 
 
-class ReqAgent:
-    def __init__(self, model_adapter, stage_name: str = "requirements", stage_type: str = "requirements", prompt_template: str | None = None, progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
-        self.model_adapter = model_adapter
-        self.stage_name = stage_name
-        self.stage_type = normalize_stage_type(stage_type)
-        self.prompt_template = prompt_template
-        self.progress_callback = progress_callback
-        self.id = "req-analyst"
-        self.capabilities = ["analysis.requirements:v1"]
-
-    def _generate_text(self, task: Task, prompt: str, action_label: str) -> str:
-        _emit_stage_progress(
-            self.progress_callback,
-            progress_kind="model",
-            progress_state="start",
-            message=action_label,
-        )
-        try:
-            text = str(self.model_adapter.generate(prompt, context=task.context))
-        except Exception as exc:
-            _emit_stage_progress(
-                self.progress_callback,
-                progress_kind="model",
-                progress_state="error",
-                message=f"{action_label}失败",
-                error=str(exc),
-            )
-            raise
-        failure = _model_failure_text(text)
-        _emit_stage_progress(
-            self.progress_callback,
-            progress_kind="model",
-            progress_state="error" if failure else "done",
-            message=f"{action_label}{'失败' if failure else '完成'}",
-            error=failure or None,
-        )
-        return text
-
-    def act(self, task: Task, state: SystemState):
-        prompt = render_stage_prompt(self.stage_name, task.context.get("spec", ""), self.prompt_template, stage_type=self.stage_type)
-        prompt = (prompt.rstrip() + TEXT_OUTPUT_QUALITY_GUARDRAIL).strip()
-        prompt = append_prompt_with_runtime_context(prompt, task, self.stage_name)
-        text = self._generate_text(task, prompt, "正在生成需求文档")
-        failure = _model_failure_text(text)
-        if failure:
-            raise ValueError(f"requirements_model_failed:{failure[:240]}")
-        return {"type": "md", "filename": "analysis/requirements.md", "content": text}
-
-
-class ArchAgent:
-    def __init__(self, model_adapter, stage_name: str = "architecture", stage_type: str = "architecture", prompt_template: str | None = None, progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
-        self.model_adapter = model_adapter
-        self.stage_name = stage_name
-        self.stage_type = normalize_stage_type(stage_type)
-        self.prompt_template = prompt_template
-        self.progress_callback = progress_callback
-        self.id = "architect"
-        self.capabilities = ["design.arch:v1"]
-
-    def _generate_text(self, task: Task, prompt: str, action_label: str) -> str:
-        _emit_stage_progress(
-            self.progress_callback,
-            progress_kind="model",
-            progress_state="start",
-            message=action_label,
-        )
-        try:
-            text = str(self.model_adapter.generate(prompt, context=task.context))
-        except Exception as exc:
-            _emit_stage_progress(
-                self.progress_callback,
-                progress_kind="model",
-                progress_state="error",
-                message=f"{action_label}失败",
-                error=str(exc),
-            )
-            raise
-        failure = _model_failure_text(text)
-        _emit_stage_progress(
-            self.progress_callback,
-            progress_kind="model",
-            progress_state="error" if failure else "done",
-            message=f"{action_label}{'失败' if failure else '完成'}",
-            error=failure or None,
-        )
-        return text
-
-    def _load_requirements_text(self, task: Task) -> str:
-        return _load_task_artifact_text(task, os.path.join("analysis", "requirements.md"))
-
-    def _stack_guardrail(self, spec: str, requirements_text: str, prompt: str) -> str:
-        project_stack = _infer_declared_stack(requirements_text) or _infer_project_stack(spec, requirements_text, prompt)
-        stack_hint = "Web（HTML/CSS/JS/TS）" if project_stack == "web" else "Python"
-        stack_forbidden = (
-            "不要出现 Python 文件、requirements.txt、pyproject.toml 等 Python 项目清单。"
-            if project_stack == "web"
-            else "不要出现 package.json、vite.config.*、src/*.ts、index.html 等前端工程清单。"
-        )
-        return (
-            "\n\n硬性约束：\n"
-            f"- 本阶段只能选择并落定一套最终技术栈，优先对齐需求文档的运行形态；当前应输出 {stack_hint} 方案。\n"
-            "- 文档中只能保留一个标题严格为“## 文件清单”的章节。\n"
-            "- 文件清单中的每一行都必须是一个相对路径，禁止在同一文档中混入第二套语言/框架的文件路径。\n"
-            f"- {stack_forbidden}\n"
-            "- 不要在文件清单章节之外再追加另一份“补充文件列表”或历史残留清单。"
-        )
-
-    def _ensure_file_list_section(self, task: Task, spec: str, arch_text: str) -> str:
-        requirements_text = self._load_requirements_text(task)
-        return _normalize_architecture_markdown(spec, requirements_text, arch_text)
-
-    def act(self, task: Task, state: SystemState):
-        spec = task.context.get("spec", "")
-        requirements_text = self._load_requirements_text(task)
-        prompt = render_stage_prompt(self.stage_name, spec, self.prompt_template, stage_type=self.stage_type)
-        if "文件清单" not in prompt:
-            prompt = (prompt.rstrip() + ARCHITECTURE_FILE_LIST_HINT).strip()
-        prompt = (prompt.rstrip() + self._stack_guardrail(spec, requirements_text, prompt) + TEXT_OUTPUT_QUALITY_GUARDRAIL).strip()
-        prompt = append_prompt_with_runtime_context(prompt, task, self.stage_name)
-        text = self._generate_text(task, prompt, "正在生成架构方案")
-        failure = _model_failure_text(text)
-        if failure:
-            raise ValueError(f"architecture_model_failed:{failure[:240]}")
-        text = self._ensure_file_list_section(task, spec, text)
-        return {"type": "md", "filename": "design/architecture.md", "content": text}
-
-
-class DocAgent:
-    def __init__(self, model_adapter, stage_name: str = "docs", stage_type: str = "docs", prompt_template: str | None = None, progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
-        self.model_adapter = model_adapter
-        self.stage_name = stage_name
-        self.stage_type = normalize_stage_type(stage_type)
-        self.prompt_template = prompt_template
-        self.progress_callback = progress_callback
-        self.id = "doc-writer"
-        self.capabilities = ["doc.write:v1"]
-
-    def _generate_text(self, task: Task, prompt: str, action_label: str) -> str:
-        _emit_stage_progress(
-            self.progress_callback,
-            progress_kind="model",
-            progress_state="start",
-            message=action_label,
-        )
-        try:
-            text = str(self.model_adapter.generate(prompt, context=task.context))
-        except Exception as exc:
-            _emit_stage_progress(
-                self.progress_callback,
-                progress_kind="model",
-                progress_state="error",
-                message=f"{action_label}失败",
-                error=str(exc),
-            )
-            raise
-        failure = _model_failure_text(text)
-        _emit_stage_progress(
-            self.progress_callback,
-            progress_kind="model",
-            progress_state="error" if failure else "done",
-            message=f"{action_label}{'失败' if failure else '完成'}",
-            error=failure or None,
-        )
-        return text
-
-    def act(self, task: Task, state: SystemState):
-        prompt = render_stage_prompt(self.stage_name, task.context.get("spec", ""), self.prompt_template, stage_type=self.stage_type)
-        prompt = (prompt.rstrip() + TEXT_OUTPUT_QUALITY_GUARDRAIL).strip()
-        prompt = append_prompt_with_runtime_context(prompt, task, self.stage_name)
-        text = self._generate_text(task, prompt, "正在生成交付文档")
-        failure = _model_failure_text(text)
-        if failure:
-            raise ValueError(f"docs_model_failed:{failure[:240]}")
-        return {"type": "md", "filename": "docs/README.md", "content": text}
-
-
 class GraphBuilder:
-    def __init__(self, base_dir: str, model_registry: ModelRegistry, storage=None):
+    def __init__(
+        self,
+        base_dir: str,
+        model_registry: ModelRegistry,
+        storage=None,
+        capability_settings_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+        skill_settings_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+        mcp_settings_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+    ):
         self.base_dir = base_dir
         self.model_registry = model_registry
         self.storage = storage or FileStore()
+        self.capability_settings_provider = capability_settings_provider
+        self.skill_settings_provider = skill_settings_provider
+        self.mcp_settings_provider = mcp_settings_provider
+
+    def _get_capability_settings(self) -> Dict[str, Any]:
+        if callable(self.capability_settings_provider):
+            try:
+                return merge_capability_settings(self.capability_settings_provider())
+            except Exception:
+                return merge_capability_settings()
+        return merge_capability_settings()
+
+    def _get_skill_settings(self) -> Dict[str, Any]:
+        if callable(self.skill_settings_provider):
+            try:
+                return merge_skill_settings(self.skill_settings_provider())
+            except Exception:
+                return merge_skill_settings()
+        return merge_skill_settings()
+
+    def _get_mcp_settings(self) -> Dict[str, Any]:
+        if callable(self.mcp_settings_provider):
+            try:
+                return merge_mcp_settings(self.mcp_settings_provider())
+            except Exception:
+                return merge_mcp_settings()
+        return merge_mcp_settings()
 
     def plan_workflow(self, task: Task, template: Dict[str, Any]) -> Dict[str, Any]:
         """Leader planning stage: dynamically design workflow per task."""
-        planner_model = self._select_model(task, stage_name="planning", capabilities=["planning.workflow:v1"])
+        planner_model = self._select_model(task, stage_name="planning", capabilities=[])
         spec = str((task.context or {}).get("spec") or "")
+        capability_settings = self._get_capability_settings()
+        skill_settings = self._get_skill_settings()
+        stage_blueprints = build_stage_type_blueprints(capability_settings, skill_settings)
         reference_stages = []
         for item in template.get("stages", []) or []:
             if not isinstance(item, dict):
@@ -1231,25 +327,33 @@ class GraphBuilder:
                 name=item.get("name"),
                 label=item.get("label"),
                 role=item.get("role"),
+                skills=item.get("skills"),
                 capabilities=item.get("capabilities"),
                 prompt_template=item.get("prompt_template"),
                 acceptance_criteria=item.get("acceptance_criteria"),
                 human_checkpoint=item.get("human_checkpoint"),
+                capability_settings=capability_settings,
+                skill_settings=skill_settings,
             )
             reference_stages.append({
                 "name": normalized.get("name"),
                 "stage_type": normalized.get("stage_type"),
+                "execution_profile": normalized.get("execution_profile"),
+                "stage_semantics": normalized.get("stage_semantics"),
                 "label": normalized.get("label"),
                 "role": normalized.get("role"),
+                "skills": normalized.get("skills"),
                 "capabilities": normalized.get("capabilities"),
             })
 
-        fallback_plan = _build_fallback_plan(spec)
+        fallback_plan = _build_fallback_plan(spec, capability_settings=capability_settings, skill_settings=skill_settings)
         preset_view = {
             name: [
                 {
                     "name": item.get("name"),
                     "stage_type": normalize_stage_type(item.get("stage_type") or item.get("name")),
+                    "execution_profile": normalize_execution_profile(item.get("execution_profile") or item.get("stage_type") or item.get("name")),
+                    "stage_semantics": normalize_stage_semantics(item.get("stage_semantics"), item.get("stage_type") or item.get("execution_profile")),
                     "label": item.get("label"),
                     "role": item.get("role"),
                 }
@@ -1257,34 +361,49 @@ class GraphBuilder:
             ]
             for name, items in REFERENCE_FLOW_PRESETS.items()
         }
+        capability_view = capability_prompt_view(capability_settings)
+        skill_view = skill_prompt_view(skill_settings)
         blueprint_view = {
             stage_type: {
                 "label": blueprint.get("label"),
                 "role": blueprint.get("role"),
+                "stage_semantics": blueprint.get("stage_semantics"),
+                "execution_profile": blueprint.get("execution_profile"),
+                "skills": blueprint.get("skills"),
                 "capabilities": blueprint.get("capabilities"),
                 "default_prompt_template": blueprint.get("prompt_template"),
                 "default_acceptance_criteria": blueprint.get("acceptance_criteria"),
             }
-            for stage_type, blueprint in STAGE_TYPE_BLUEPRINTS.items()
+            for stage_type, blueprint in stage_blueprints.items()
         }
         plan_prompt = (
             "你是项目的管理者/智者智能体，负责根据任务复杂度现场设计执行流程。\n"
-            "你的职责不是套固定模板，而是根据任务目标、风险、规模，决定需要哪些角色、哪些阶段、阶段顺序、阶段数量以及每个阶段的提示词。\n"
+            "你的职责不是套固定模板，而是根据任务目标、风险、规模，决定需要哪些角色、哪些阶段实例、阶段顺序、阶段数量以及每个阶段的提示词。\n"
             f"任务需求：{spec}\n"
             f"参考预设（只作参考，不能机械照搬）：{json.dumps(preset_view, ensure_ascii=False)}\n"
-            f"参考阶段蓝图（stage_type 必须从这里选择或映射）：{json.dumps(blueprint_view, ensure_ascii=False)}\n"
+            f"Skill 目录（用于增强 agent 的方法论与调用策略）：{json.dumps(skill_view, ensure_ascii=False)}\n"
+            f"能力目录（优先从这里选择 capabilities，不要凭空创造能力 ID）：{json.dumps(capability_view, ensure_ascii=False)}\n"
+            f"参考执行轮廓蓝图（execution_profile 必须从这里选择或映射）：{json.dumps(blueprint_view, ensure_ascii=False)}\n"
             f"现有标准流程仅供参考：{json.dumps(reference_stages, ensure_ascii=False)}\n"
             "设计要求：\n"
-            "1) 你可以自定义阶段 name/label/role，也可以重复同一种 stage_type 形成开发闭环；\n"
-            "2) stage_type 必须可落到执行器，只能是 requirements / architecture / coding / testing / docs 之一（允许你先用别名描述，但最终 JSON 里请填规范值）；\n"
-            "3) 简单任务要避免过度拆解，复杂任务可以拆出多个 implementation / verification 闭环；\n"
-            "4) 只要存在 coding 类阶段，前面必须至少有一个 requirements 和一个 architecture 类阶段；\n"
-            "5) 只要存在 testing 类阶段，前面必须至少有一个 coding 类阶段；\n"
-            "6) prompt_template 必须可以直接喂给对应执行智能体；\n"
-            "7) 如存在跨阶段协作，请输出 conversation_groups，或在阶段上附 conversation_group；\n"
-            "8) 只输出严格 JSON，不要解释。\n"
+            "1) 你可以自定义阶段实例的 name/label/role，也可以重复同一种 execution_profile 形成闭环；\n"
+            "2) 阶段实例名称不固定，但 execution_profile 必须可落到执行器，只能是 requirements / architecture / assets / coding / testing / docs 之一；\n"
+            "3) stage_semantics 用于表达业务语义，优先从 analysis / planning / design / creation / transformation / verification / delivery / decision / coordination 中选择；\n"
+            "4) 简单任务要避免过度拆解，复杂任务可以拆出多个 creation / verification 闭环；\n"
+            "5) 只要存在 coding execution_profile，前面必须至少有一个 requirements 和一个 architecture execution_profile；\n"
+            "6) 若任务明显需要角色、图标、插画、游戏对象或图片素材，请在 coding 之前加入 assets execution_profile；\n"
+            "7) 只要存在 testing execution_profile，前面必须至少有一个 coding execution_profile；\n"
+            "8) skills 字段优先从 skill 目录中选择，用于增强该阶段 agent 的思考方式、约束和调用策略；基础阶段也应尽量显式给出合适的 skills；\n"
+            "9) capabilities 字段优先从能力目录中选择，可为一个阶段组合多个能力；除非该阶段只是走最基础默认执行，否则不要留空；\n"
+            "10) skill 不等于 capability：skill 负责方法论与调用策略，capability 负责实际执行；agent 可以直接调用 capability，不要求必须经由 skill；\n"
+            "11) 如果某个 skill 依赖或强烈偏好特定 capability，请确保该阶段 capabilities 中包含对应能力；\n"
+            "12) 如果某阶段需要主动调用特殊能力（如 asset.generate / doc.read / doc.write），必须把对应 capability 显式写进该阶段的 capabilities；\n"
+            "13) 选择 capability 时要参考 input_fields / output_fields / supported_binding_types，确保它和该阶段的职责匹配；\n"
+            "14) prompt_template 必须可以直接喂给对应执行智能体；如阶段可能主动调用能力，请在 prompt_template 中明确说明可调用目标；\n"
+            "15) 如存在跨阶段协作，请输出 conversation_groups，或在阶段上附 conversation_group；\n"
+            "16) 只输出严格 JSON，不要解释。\n"
             "输出格式："
-            "{\"complexity\":\"simple|standard|complex\",\"reference_preset\":\"lightweight|standard|deep|custom\",\"summary\":\"...\",\"conversation_groups\":[{\"key\":\"dev_loop\",\"label\":\"开发闭环\",\"kind\":\"loop\",\"stages\":[\"core_impl\",\"qa_verification\"]}],\"stages\":[{\"name\":\"clarify_scope\",\"stage_type\":\"requirements\",\"label\":\"范围澄清\",\"role\":\"产品分析师\",\"prompt_template\":\"...\",\"capabilities\":[\"analysis.requirements:v1\"],\"acceptance_criteria\":\"...\",\"depends_on\":[],\"human_checkpoint\":false},{\"name\":\"core_impl\",\"stage_type\":\"coding\",\"label\":\"核心实现\",\"role\":\"软件工程师\",\"conversation_group\":{\"key\":\"dev_loop\",\"label\":\"开发闭环\"},\"prompt_template\":\"...\",\"capabilities\":[\"code.edit:v1\"],\"acceptance_criteria\":\"...\",\"depends_on\":[\"clarify_scope\"],\"human_checkpoint\":false}]}"
+            "{\"complexity\":\"simple|standard|complex\",\"reference_preset\":\"lightweight|standard|deep|custom\",\"summary\":\"...\",\"conversation_groups\":[{\"key\":\"dev_loop\",\"label\":\"开发闭环\",\"kind\":\"loop\",\"stages\":[\"core_impl\",\"qa_verification\"]}],\"stages\":[{\"name\":\"clarify_scope\",\"stage_semantics\":\"analysis\",\"execution_profile\":\"requirements\",\"stage_type\":\"requirements\",\"label\":\"范围澄清\",\"role\":\"产品分析师\",\"skills\":[\"requirements.discovery:v1\"],\"prompt_template\":\"...\",\"capabilities\":[],\"acceptance_criteria\":\"...\",\"depends_on\":[],\"human_checkpoint\":false},{\"name\":\"visual_assets\",\"stage_semantics\":\"creation\",\"execution_profile\":\"assets\",\"stage_type\":\"assets\",\"label\":\"视觉素材\",\"role\":\"视觉素材设计师\",\"skills\":[\"asset.prompting:v1\"],\"prompt_template\":\"...\",\"capabilities\":[\"asset.generate:v1\"],\"acceptance_criteria\":\"...\",\"depends_on\":[\"clarify_scope\"],\"human_checkpoint\":false},{\"name\":\"core_impl\",\"stage_semantics\":\"creation\",\"execution_profile\":\"coding\",\"stage_type\":\"coding\",\"label\":\"核心实现\",\"role\":\"软件工程师\",\"skills\":[\"coding.incremental_delivery:v1\"],\"conversation_group\":{\"key\":\"dev_loop\",\"label\":\"开发闭环\"},\"prompt_template\":\"...\",\"capabilities\":[],\"acceptance_criteria\":\"...\",\"depends_on\":[\"visual_assets\"],\"human_checkpoint\":false}]}"
         )
 
         try:
@@ -1294,7 +413,12 @@ class GraphBuilder:
             out = f"[planning error] {exc}"
             parsed = None
 
-        planned_stages = _normalize_stage_plan(parsed.get("stages") if isinstance(parsed, dict) else [], spec)
+        planned_stages = _normalize_stage_plan(
+            parsed.get("stages") if isinstance(parsed, dict) else [],
+            spec,
+            capability_settings=capability_settings,
+            skill_settings=skill_settings,
+        )
         used_fallback = not bool(planned_stages)
         if used_fallback:
             planned_stages = fallback_plan["stages"]
@@ -1304,15 +428,19 @@ class GraphBuilder:
             stage_name = str(stage.get("name") or "").strip()
             if not stage_name:
                 continue
-            stage_type = normalize_stage_type(stage.get("stage_type") or stage_name)
+            stage_type = resolve_stage_execution_profile(stage)
             base_cfg = dict(event_configs.get(stage_type, {})) if stage_type != stage_name else dict(event_configs.get(stage_name, {}))
             stage_cfg = dict(base_cfg)
             stage_cfg.update(event_configs.get(stage_name, {}))
             stage_cfg["stage_type"] = stage_type
+            stage_cfg["execution_profile"] = stage_type
+            stage_cfg["stage_semantics"] = resolve_stage_semantics(stage, execution_profile=stage_type)
             if stage.get("prompt_template"):
                 stage_cfg["prompt_template"] = stage["prompt_template"]
             if stage.get("role"):
                 stage_cfg["planned_role"] = stage["role"]
+            if stage.get("skills"):
+                stage_cfg["planned_skills"] = list(stage["skills"])
             if stage.get("acceptance_criteria"):
                 stage_cfg["acceptance_criteria"] = stage["acceptance_criteria"]
             event_configs[stage_name] = stage_cfg
@@ -1561,7 +689,7 @@ class GraphBuilder:
 
         raw = ""
         try:
-            reviewer = self._select_model(task, stage_name="planning", capabilities=["planning.review:v1"])
+            reviewer = self._select_model(task, stage_name="planning", capabilities=[])
             _emit_stage_progress(
                 progress_callback,
                 progress_kind="review",
@@ -1717,14 +845,22 @@ class GraphBuilder:
     def build(self, task: Task, template: Dict[str, Any], stage_logger=None, should_abort: Callable[[Task], bool] | None = None) -> StateGraph:
         """Build a LangGraph flow from a dynamic stage plan."""
         sg = StateGraph(dict)
+        capability_settings = self._get_capability_settings()
+        skill_settings = self._get_skill_settings()
+        capability_runtime = CapabilityRuntime(
+            capability_settings=capability_settings,
+            mcp_settings=self._get_mcp_settings(),
+        )
+        capability_index = capability_runtime.capability_index
         stages = [dict(st) for st in (template.get("stages") or []) if isinstance(st, dict) and st.get("name")]
         if not stages:
             raise ValueError("workflow has no stages")
 
         stage_defs_by_name = {str(st["name"]): dict(st) for st in stages}
         ordered_stage_names = [str(st["name"]) for st in stages]
-        stage_types_by_name = {name: normalize_stage_type(stage_defs_by_name[name].get("stage_type") or name) for name in ordered_stage_names}
+        stage_types_by_name = {name: resolve_stage_execution_profile(stage_defs_by_name[name]) for name in ordered_stage_names}
         stage_labels = {name: stage_defs_by_name[name].get("label", name) for name in ordered_stage_names}
+        stage_skills = {name: stage_defs_by_name[name].get("skills", []) for name in ordered_stage_names}
         stage_caps = {name: stage_defs_by_name[name].get("capabilities", []) for name in ordered_stage_names}
         stages_by_type: Dict[str, List[str]] = {}
         for name in ordered_stage_names:
@@ -1758,6 +894,30 @@ class GraphBuilder:
                 return later[0]
             return candidates[-1]
 
+        def stage_invokable_capabilities(stage_name: str) -> List[Dict[str, Any]]:
+            resolved: List[Dict[str, Any]] = []
+            seen = set()
+            stage_type = stage_types_by_name.get(stage_name, normalize_stage_type(stage_name))
+            candidate_ids = list(stage_caps.get(stage_name, []) or [])
+            for capability_id, capability_def in capability_index.items():
+                if capability_id in seen:
+                    continue
+                recommended = capability_def.get("recommended_stage_types") or []
+                if capability_def.get("enabled", True) and capability_def.get("planner_visible", True) and stage_type in recommended:
+                    candidate_ids.append(capability_id)
+            for capability_id in candidate_ids:
+                normalized_id = str(capability_id or "").strip()
+                if not normalized_id or normalized_id in seen:
+                    continue
+                capability_def = capability_index.get(normalized_id)
+                if not isinstance(capability_def, dict):
+                    continue
+                if capability_def.get("enabled", True) is False:
+                    continue
+                seen.add(normalized_id)
+                resolved.append(dict(capability_def))
+            return resolved
+
         def create_agent(stage_name: str):
             stage_def = stage_defs_by_name.get(stage_name, {"name": stage_name, "stage_type": normalize_stage_type(stage_name)})
             stage_type = stage_types_by_name.get(stage_name, normalize_stage_type(stage_def.get("stage_type") or stage_name))
@@ -1775,6 +935,8 @@ class GraphBuilder:
                 return ReqAgent(model_adapter, stage_name=stage_name, stage_type=stage_type, prompt_template=prompt_template, progress_callback=progress_callback)
             if stage_type == "architecture":
                 return ArchAgent(model_adapter, stage_name=stage_name, stage_type=stage_type, prompt_template=prompt_template, progress_callback=progress_callback)
+            if stage_type == "assets":
+                return AssetAgent(model_adapter, stage_name=stage_name, stage_type=stage_type, prompt_template=prompt_template, progress_callback=progress_callback)
             if stage_type == "coding":
                 return PatchAgent(model_adapter=model_adapter, stage_name=stage_name, stage_type=stage_type, progress_callback=progress_callback)
             if stage_type == "testing":
@@ -1806,6 +968,7 @@ class GraphBuilder:
                     mapping = {
                         "requirements": "req-analyst",
                         "architecture": "architect",
+                        "assets": "asset-designer",
                         "coding": "patcher",
                         "testing": "tester",
                         "docs": "doc-writer",
@@ -1818,9 +981,15 @@ class GraphBuilder:
                     return str(stage_cfg.get("planned_role") or stage_def.get("role") or fallback or target_type)
 
                 def apply_runtime_collaboration_context(target_stage: str) -> None:
+                    prompt_context = collaboration.build_stage_prompt_context(target_stage)
+                    skill_context = build_skill_runtime_context(stage_skills.get(target_stage, []), skill_settings)
+                    capability_context = build_capability_invoke_prompt(stage_invokable_capabilities(target_stage))
+                    prompt_context = "\n\n".join(
+                        part for part in [prompt_context, skill_context, capability_context] if str(part or "").strip()
+                    )
                     task_obj.context["_runtime_collaboration"] = {
                         "stage_name": target_stage,
-                        "prompt_context": collaboration.build_stage_prompt_context(target_stage),
+                        "prompt_context": prompt_context,
                         "selection_context": collaboration.build_stage_targeted_context(target_stage),
                     }
 
@@ -2029,6 +1198,30 @@ class GraphBuilder:
                     }
                     return payload
 
+                def write_runtime_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
+                    normalized = dict(artifact or {})
+                    uri = str(normalized.get("uri") or "").strip()
+                    if uri and uri != "inline":
+                        state.setdefault("artifacts", []).append(normalized)
+                        return normalized
+                    filename = str(normalized.get("filename") or "").strip()
+                    if not filename:
+                        return normalized
+                    if "data" in normalized and isinstance(normalized.get("data"), (bytes, bytearray)):
+                        uri = self.storage.put(task_obj.task_id, filename, bytes(normalized.get("data") or b""))
+                    elif normalized.get("content") is not None:
+                        content = normalized.get("content")
+                        if isinstance(content, bytes):
+                            uri = self.storage.put(task_obj.task_id, filename, content)
+                        else:
+                            uri = write_text(self.base_dir, task_obj.task_id, filename, str(content))
+                    else:
+                        return normalized
+                    normalized["uri"] = uri
+                    normalized.pop("data", None)
+                    state.setdefault("artifacts", []).append(normalized)
+                    return normalized
+
                 def execute_stage_once(target_stage: str, reason: str | None = None) -> Dict[str, Any] | None:
                     target_type = stage_types_by_name.get(target_stage, normalize_stage_type(target_stage))
                     target_cfg = get_stage_cfg(target_stage)
@@ -2058,6 +1251,7 @@ class GraphBuilder:
                         return None
                     apply_runtime_collaboration_context(target_stage)
                     conversation_id = None
+                    capability_directives: List[Dict[str, Any]] = []
                     try:
                         agent = create_agent(target_stage)
                         actor_id = getattr(agent, "id", actor_id)
@@ -2078,6 +1272,7 @@ class GraphBuilder:
                                 start_payload["reason"] = reason
                             stage_logger(target_stage, "start", start_payload)
                         exec_result = agent.act(task_obj, SystemState())
+                        exec_result, capability_directives = extract_capability_invocations(exec_result)
                         conversation_id = post_stage_status(
                             target_stage,
                             target_type,
@@ -2088,6 +1283,15 @@ class GraphBuilder:
                             actor_id=f"{target_stage}-system",
                             payload={"planned_role": actor_role},
                         )
+                        if capability_directives and stage_logger:
+                            stage_logger(target_stage, "progress", {
+                                "label": stage_labels.get(target_stage, target_stage),
+                                "stage_type": target_type,
+                                "progress_kind": "capability_invoke",
+                                "progress_state": "detected",
+                                "count": len(capability_directives),
+                                "message": f"检测到 {len(capability_directives)} 个能力调用请求",
+                            })
                     except Exception as e:
                         clear_runtime_collaboration_context()
                         err_text = str(e)
@@ -2180,6 +1384,57 @@ class GraphBuilder:
                         payload["planned_role"] = target_cfg.get("planned_role")
                     if target_cfg.get("acceptance_criteria"):
                         payload["acceptance_criteria"] = target_cfg.get("acceptance_criteria")
+                    requested_capabilities, requested_capability_options = build_requested_capability_execution(capability_directives)
+                    if capability_directives:
+                        payload["requested_capability_invocations"] = capability_directives
+                    capability_progress = None
+                    if stage_logger:
+                        capability_progress = lambda cap_payload: stage_logger(target_stage, "progress", {
+                            "label": stage_labels.get(target_stage, target_stage),
+                            "stage_type": target_type,
+                            "progress_kind": "capability",
+                            **(cap_payload or {}),
+                        })
+                    executed_capability_ids = set()
+                    if requested_capabilities:
+                        request_stage_cfg = dict(target_cfg)
+                        merged_options = dict(target_cfg.get("capability_options") or {}) if isinstance(target_cfg.get("capability_options"), dict) else {}
+                        for capability_id, options in requested_capability_options.items():
+                            merged_entry = dict(merged_options.get(capability_id) or {})
+                            merged_entry.update(options)
+                            merged_options[capability_id] = merged_entry
+                        request_stage_cfg["capability_options"] = merged_options
+                        payload = capability_runtime.apply_stage_capabilities(
+                            task=task_obj,
+                            state=state,
+                            stage_name=target_stage,
+                            stage_type=target_type,
+                            stage_label=stage_labels.get(target_stage, target_stage),
+                            stage_config=request_stage_cfg,
+                            capabilities=requested_capabilities,
+                            exec_result=exec_result,
+                            payload=payload,
+                            write_artifact=write_runtime_artifact,
+                            progress_callback=capability_progress,
+                        )
+                        executed_capability_ids.update(requested_capabilities)
+                    remaining_capabilities = [
+                        capability_id for capability_id in (stage_caps.get(target_stage, []) or [])
+                        if str(capability_id or "").strip() and str(capability_id or "").strip() not in executed_capability_ids
+                    ]
+                    payload = capability_runtime.apply_stage_capabilities(
+                        task=task_obj,
+                        state=state,
+                        stage_name=target_stage,
+                        stage_type=target_type,
+                        stage_label=stage_labels.get(target_stage, target_stage),
+                        stage_config=target_cfg,
+                        capabilities=remaining_capabilities,
+                        exec_result=exec_result,
+                        payload=payload,
+                        write_artifact=write_runtime_artifact,
+                        progress_callback=capability_progress,
+                    )
                     review_progress = None
                     if stage_logger:
                         review_progress = lambda review_payload: stage_logger(target_stage, "progress", {

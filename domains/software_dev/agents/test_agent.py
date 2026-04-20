@@ -13,7 +13,7 @@ class TestAgent:
     id = "tester"
     role_name = "TestAgent"
     domain = "software"
-    capabilities: List[str] = ["test.run:v1", "code.review:v1"]
+    capabilities: List[str] = []
 
     def __init__(self, executor=None, workspace_root: str = "workspace", stage_name: str = "testing", stage_type: str = "testing", progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
         self.executor = executor or CodeExecutionPlugin()
@@ -367,7 +367,7 @@ class TestAgent:
             self.id,
             task,
             intent="run_tests",
-            capabilities_used=["test.run:v1"],
+            capabilities_used=[],
             artifacts=artifacts,
             metadata={},
         )

@@ -1,0 +1,101 @@
+{
+  "notes": "Skill 负责增强智能体的方法论与调用策略；Capability 负责实际执行。",
+  "catalog": [
+    {
+      "id": "planning.dynamic_orchestration:v1",
+      "label": "动态流程设计",
+      "category": "planning",
+      "description": "指导 leader 基于任务复杂度、能力供给和风险现场设计流程，而不是套用固定模板。",
+      "recommended_stage_types": [],
+      "default_stage_assignment": false,
+      "planner_visible": true,
+      "prompt_hint": "先判断任务复杂度、风险和缺口，再决定阶段数量、闭环结构、角色分工与人工决策点。",
+      "preferred_capabilities": [],
+      "required_capabilities": []
+    },
+    {
+      "id": "planning.review_governance:v1",
+      "label": "规划评审与收敛",
+      "category": "planning",
+      "description": "指导 leader 或评审智能体基于证据判断方案是否通过、是否返工、是否需要人工决策。",
+      "recommended_stage_types": [],
+      "default_stage_assignment": false,
+      "planner_visible": true,
+      "prompt_hint": "优先依据需求、前置产物和失败证据给出通过/返工/人工决策判断，不要只给笼统建议。",
+      "preferred_capabilities": [],
+      "required_capabilities": []
+    },
+    {
+      "id": "requirements.discovery:v1",
+      "label": "需求澄清方法",
+      "category": "analysis",
+      "description": "帮助需求分析智能体聚焦目标、范围、约束和验收标准，避免越界到架构或实现。",
+      "recommended_stage_types": ["requirements"],
+      "default_stage_assignment": true,
+      "planner_visible": true,
+      "prompt_hint": "先界定目标、边界、非功能约束和验收标准，再输出需求文档。",
+      "preferred_capabilities": [],
+      "required_capabilities": []
+    },
+    {
+      "id": "architecture.solutioning:v1",
+      "label": "方案拆解方法",
+      "category": "design",
+      "description": "帮助架构智能体输出可实现的技术方案、模块职责和单一文件清单。",
+      "recommended_stage_types": ["architecture"],
+      "default_stage_assignment": true,
+      "planner_visible": true,
+      "prompt_hint": "先收敛到单一技术栈，再给出模块边界、依赖关系和唯一文件清单。",
+      "preferred_capabilities": [],
+      "required_capabilities": []
+    },
+    {
+      "id": "asset.prompting:v1",
+      "label": "素材策划与提示词工程",
+      "category": "assets",
+      "description": "帮助素材智能体先做素材清单、规格拆解和提示词设计，再按需发起生成。",
+      "recommended_stage_types": ["assets"],
+      "default_stage_assignment": true,
+      "planner_visible": true,
+      "prompt_hint": "先输出素材清单、尺寸/风格/用途，再决定是否调用生成能力。",
+      "preferred_capabilities": ["asset.generate:v1"],
+      "required_capabilities": []
+    },
+    {
+      "id": "coding.incremental_delivery:v1",
+      "label": "增量开发与定点修补",
+      "category": "engineering",
+      "description": "指导编码智能体优先做最小必要修改，保留健康代码并收敛重复定义。",
+      "recommended_stage_types": ["coding"],
+      "default_stage_assignment": true,
+      "planner_visible": true,
+      "prompt_hint": "优先定点修改、对齐文件清单和接口契约，避免整文件重写。",
+      "preferred_capabilities": [],
+      "required_capabilities": []
+    },
+    {
+      "id": "testing.closed_loop:v1",
+      "label": "测试闭环策略",
+      "category": "quality",
+      "description": "指导测试智能体区分冒烟与全面测试，并把失败结论结构化打回开发环节。",
+      "recommended_stage_types": ["testing"],
+      "default_stage_assignment": true,
+      "planner_visible": true,
+      "prompt_hint": "先给出失败证据和复现路径，再决定回退到编码、素材或人工决策。",
+      "preferred_capabilities": [],
+      "required_capabilities": []
+    },
+    {
+      "id": "docs.delivery_authoring:v1",
+      "label": "交付文档编写",
+      "category": "delivery",
+      "description": "帮助文档智能体整合实现结果、测试证据和运行方式，生成可交付文档。",
+      "recommended_stage_types": ["docs"],
+      "default_stage_assignment": true,
+      "planner_visible": true,
+      "prompt_hint": "整合运行说明、配置、限制、测试结论；若需要正式文档格式，可调用文档能力。",
+      "preferred_capabilities": ["doc.write:v1"],
+      "required_capabilities": []
+    }
+  ]
+}

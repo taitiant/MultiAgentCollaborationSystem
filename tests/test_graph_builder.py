@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import orchestration.graph_builder as graph_builder_module
 from core import Task
@@ -20,6 +21,7 @@ from orchestration.graph_builder import (
     resolve_conversation_groups,
     write_leader_plan_snapshot,
 )
+from orchestration.workflow_plan import _normalize_stage_plan
 
 
 def test_build_rework_guidance_for_coding_emphasizes_alignment_and_deduplication():
@@ -99,9 +101,87 @@ def test_write_leader_plan_snapshot_writes_json_file(tmp_path):
     plan_path = write_leader_plan_snapshot(task, str(tmp_path), payload)
 
     assert plan_path.endswith("plan/leader_plan.json")
+
+
+def test_normalize_stage_plan_keeps_dynamic_stage_instance_and_internal_profile():
+    stages = _normalize_stage_plan(
+        [
+            {
+                "name": "ppt_outline_design",
+                "label": "PPT 提纲设计",
+                "stage_semantics": "design",
+                "execution_profile": "architecture",
+            },
+            {
+                "name": "slides_delivery",
+                "label": "PPT 交付整理",
+                "stage_semantics": "delivery",
+                "execution_profile": "docs",
+            },
+        ],
+        "制作一份汇报 PPT",
+    )
+
+    assert stages[0]["name"] == "ppt_outline_design"
+    assert stages[0]["stage_semantics"] == "design"
+    assert stages[0]["execution_profile"] == "architecture"
+    assert stages[1]["stage_semantics"] == "delivery"
+    assert stages[1]["execution_profile"] == "docs"
+
+
+def test_plan_workflow_prompt_mentions_explicit_capability_assignment(tmp_path, monkeypatch):
+    task = Task(
+        task_id="task-plan-capabilities",
+        domain="software",
+        required_capabilities=["asset.generate:v1", "doc.write:v1"],
+        context={"spec": "生成带素材和交付文档的小游戏"},
+        workspace_path=str(tmp_path / "workspace"),
+    )
+    builder = GraphBuilder(str(tmp_path), ModelRegistry())
+    captured = {}
+
+    class FakePlanner:
+        def generate(self, prompt, context=None):
+            captured["prompt"] = prompt
+            return json.dumps(
+                {
+                    "complexity": "standard",
+                    "reference_preset": "custom",
+                    "summary": "demo",
+                    "stages": [
+                        {
+                            "name": "requirements",
+                            "stage_type": "requirements",
+                            "label": "需求分析",
+                            "role": "需求分析师",
+                            "prompt_template": "需求",
+                            "capabilities": ["analysis.requirements:v1"],
+                            "acceptance_criteria": "清晰",
+                            "depends_on": [],
+                            "human_checkpoint": False,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(builder, "_select_model", lambda *_args, **_kwargs: FakePlanner())
+
+    builder.plan_workflow(task, {"stages": []})
+
+    prompt = captured["prompt"]
+    plan_path = Path(task.workspace_path) / "plan" / "leader_plan.json"
+    assert plan_path.exists()
+    assert "Skill 目录" in prompt
+    assert "skills 字段优先从 skill 目录中选择" in prompt
+    assert "skill 不等于 capability" in prompt
+    assert "如果某阶段需要主动调用特殊能力" in prompt
+    assert "input_fields / output_fields / supported_binding_types" in prompt
+    assert "不要留空" in prompt
     with open(plan_path, "r", encoding="utf-8") as f:
         saved = json.load(f)
-    assert saved["summary"] == "动态流程"
+    assert saved["summary"] == "demo"
+    assert saved["stages"][0]["skills"] == ["requirements.discovery:v1"]
 
 
 def test_human_checkpoint_stops_graph_before_downstream_stage(tmp_path, monkeypatch):
@@ -301,7 +381,7 @@ def test_doc_agent_prompt_includes_quality_guardrail(tmp_path, monkeypatch):
     task = Task(
         task_id="task-doc-quality",
         domain="software",
-        required_capabilities=["doc.write:v1"],
+        required_capabilities=["delivery.readme:v1"],
         context={"spec": "编写一个 flappy bird 小游戏"},
         workspace_path=str(tmp_path / "workspace"),
     )
@@ -536,7 +616,7 @@ def test_docs_review_accepts_when_readme_sections_exist_even_if_model_says_evide
     task = Task(
         task_id="task-doc-review-rescue",
         domain="software",
-        required_capabilities=["doc.write:v1"],
+        required_capabilities=["delivery.readme:v1"],
         context={"spec": "demo", "event_configs": {"docs": {"acceptance_criteria": "README 清晰说明运行方式、文件结构、限制与测试结论。"}}},
         workspace_path=str(workspace),
     )
@@ -737,7 +817,7 @@ def test_non_agent_stage_payload_uses_current_stage_artifacts_only(tmp_path, mon
     task = Task(
         task_id="task-stage-artifact-scope",
         domain="software",
-        required_capabilities=["doc.write:v1"],
+        required_capabilities=["delivery.readme:v1"],
         context={"spec": "demo", "event_configs": {}},
         workspace_path=str(tmp_path / "workspace"),
     )
@@ -797,7 +877,7 @@ def test_stage_delivery_blackboard_summary_uses_current_stage_artifact_count_onl
     task = Task(
         task_id="task-stage-delivery-summary-scope",
         domain="software",
-        required_capabilities=["doc.write:v1"],
+        required_capabilities=["delivery.readme:v1"],
         context={"spec": "demo", "event_configs": {}},
         workspace_path=str(tmp_path / "workspace"),
     )
@@ -848,3 +928,56 @@ def test_stage_delivery_blackboard_summary_uses_current_stage_artifact_count_onl
     for update in delivery_updates:
         assert update["payload"]["output_summary"]["artifact_count"] == 1
         assert "产物数量：1。" in update["content"]
+
+
+def test_stage_can_trigger_capability_invoke_without_polluting_readme(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    task = Task(
+        task_id="task-capability-invoke-doc",
+        domain="software",
+        required_capabilities=["delivery.readme:v1", "doc.write:v1"],
+        context={"spec": "demo", "event_configs": {}},
+        workspace_path=str(workspace),
+    )
+    builder = GraphBuilder(str(tmp_path), ModelRegistry())
+
+    monkeypatch.setattr(builder, "_select_model", lambda *_args, **_kwargs: object())
+
+    def fake_doc_act(self, task_obj, _state):
+        return {
+            "type": "md",
+            "filename": "docs/README.md",
+            "content": (
+                "# README\n\n"
+                "这是交付说明。\n\n"
+                "```capability.invoke\n"
+                "{\"capability_id\":\"doc.write:v1\",\"input\":{\"target_filename\":\"documents/guide.docx\",\"content\":\"# Guide\\n\\nHello\",\"output_formats\":[\"docx\"]}}\n"
+                "```\n"
+            ),
+        }
+
+    def fake_review(*_args, **_kwargs):
+        return {"review_status": "skipped", "pass": None, "feedback": "skip"}
+
+    monkeypatch.setattr(DocAgent, "act", fake_doc_act)
+    monkeypatch.setattr(builder, "_review_stage_output", fake_review)
+
+    graph = builder.build(
+        task,
+        {
+            "stages": [
+                {"name": "release_docs", "stage_type": "docs", "capabilities": []},
+            ]
+        },
+    )
+
+    result = graph.invoke({"task": task, "artifacts": []})
+
+    assert result.get("error") is None
+    artifact_uris = [str(item.get("uri") or "") for item in (result.get("artifacts") or [])]
+    readme_uri = next(uri for uri in artifact_uris if uri.endswith("docs/README.md"))
+    assert any(uri.endswith("documents/guide.docx") for uri in artifact_uris)
+
+    readme_path = Path(readme_uri)
+    readme_text = readme_path.read_text(encoding="utf-8")
+    assert "capability.invoke" not in readme_text

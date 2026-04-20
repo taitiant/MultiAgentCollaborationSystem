@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>任务详情 - MACS</title>
-  <link rel="stylesheet" href="/app-shell.css?v=20260324b" />
+  <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
@@ -287,7 +287,107 @@
     .workflow-chip.waiting { color:#6741d9; }
     .workflow-chip.warning { color:#9a6700; }
     .workflow-chip.critical { color:#c92a2a; }
+    .workflow-chip.capability.pending { color:#9a6700; }
+    .workflow-chip.capability.done { color:#2b8a3e; }
+    .workflow-chip.capability.error { color:#c92a2a; }
+    .workflow-chip.capability.assigned { color:#36506a; }
     .workflow-icon { width:26px; height:26px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; font-size:14px; background:#edf3f9; margin-top:1px; }
+    .workflow-node-badge {
+      position:absolute;
+      top:10px;
+      right:10px;
+      display:inline-flex;
+      align-items:center;
+      max-width:96px;
+      padding:3px 8px;
+      border-radius:999px;
+      font-size:10px;
+      font-weight:800;
+      line-height:1;
+      letter-spacing:.01em;
+      background:#edf4fb;
+      color:#486178;
+      border:1px solid #d7e4f2;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      box-shadow:0 4px 10px rgba(28, 49, 73, .08);
+    }
+    .workflow-node-badge.done { background:#e9f8ef; border-color:#c4e6cf; color:#2b8a3e; }
+    .workflow-node-badge.pending { background:#fff4d8; border-color:#f2d48a; color:#9a6700; }
+    .workflow-node-badge.error { background:#ffe8e5; border-color:#f4b8b0; color:#c03426; }
+    .workflow-node-badge.assigned { background:#eff4fb; border-color:#dce7f3; color:#486178; }
+    .workflow-popover {
+      position:absolute;
+      z-index:6;
+      width:min(320px, calc(100vw - 48px));
+      max-height:260px;
+      overflow:auto;
+      border:1px solid #d9e7f5;
+      border-radius:16px;
+      background:rgba(255,255,255,.98);
+      box-shadow:0 18px 42px rgba(20, 43, 69, .18);
+      backdrop-filter:blur(8px);
+      padding:12px;
+    }
+    .workflow-popover::before {
+      content:"";
+      position:absolute;
+      left:-7px;
+      top:22px;
+      width:12px;
+      height:12px;
+      transform:rotate(45deg);
+      background:rgba(255,255,255,.98);
+      border-left:1px solid #d9e7f5;
+      border-bottom:1px solid #d9e7f5;
+    }
+    .workflow-popover.left::before {
+      left:auto;
+      right:-7px;
+      border-left:none;
+      border-bottom:none;
+      border-right:1px solid #d9e7f5;
+      border-top:1px solid #d9e7f5;
+    }
+    .workflow-popover-head {
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:8px;
+    }
+    .workflow-popover-head strong {
+      display:block;
+      color:#17304d;
+      font-size:13px;
+      line-height:1.45;
+    }
+    .workflow-popover-subtitle {
+      color:#607286;
+      font-size:11px;
+      line-height:1.5;
+      margin-top:4px;
+    }
+    .workflow-popover-meta {
+      display:grid;
+      gap:6px;
+      margin-bottom:8px;
+      color:#546b82;
+      font-size:12px;
+      line-height:1.55;
+    }
+    .workflow-popover-actions {
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-top:10px;
+    }
+    .workflow-popover-actions button {
+      padding:6px 10px;
+      border-radius:10px;
+      font-size:12px;
+    }
     @keyframes nodePulse { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
     @keyframes nodePulseRed { 0%,100% { transform: translateY(0); box-shadow: 0 0 0 2px rgba(250,82,82,.12), 0 10px 24px rgba(32,52,75,.12); } 50% { transform: translateY(-3px); box-shadow: 0 0 0 4px rgba(250,82,82,.18), 0 14px 28px rgba(32,52,75,.16); } }
     .workflow-legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; color:#5c7088; font-size:11px; }
@@ -486,6 +586,156 @@
     }
     .detail-card.prompt {
       border-color:#dbe7f7;
+    }
+    .detail-card.capability {
+      border-color:#d9e7ff;
+      background:linear-gradient(180deg, #f5f9ff, #fcfdff);
+    }
+    .detail-card.audit {
+      border-color:#dfe7f3;
+      background:linear-gradient(180deg, #fbfdff, #f7fbff);
+    }
+    .cap-call-list { display:grid; gap:8px; }
+    .cap-call-item {
+      border:1px solid #e4ebf4;
+      border-radius:12px;
+      background:rgba(255,255,255,.92);
+      padding:10px;
+      display:grid;
+      gap:4px;
+    }
+    .cap-call-head {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+    }
+    .cap-call-name {
+      font-size:12px;
+      font-weight:700;
+      color:#1e3854;
+    }
+    .cap-call-badge {
+      display:inline-flex;
+      align-items:center;
+      padding:2px 8px;
+      border-radius:999px;
+      background:#edf4fb;
+      color:#496178;
+      font-size:11px;
+      font-weight:700;
+      white-space:nowrap;
+    }
+    .cap-call-badge.applied,
+    .cap-call-badge.done {
+      background:#e8f7ee;
+      color:#2b8a3e;
+    }
+    .cap-call-badge.binding_ready,
+    .cap-call-badge.pending,
+    .cap-call-badge.placeholder_ready {
+      background:#fff2d8;
+      color:#9a6700;
+    }
+    .cap-call-badge.error,
+    .cap-call-badge.unsupported_format,
+    .cap-call-badge.missing_source {
+      background:#ffe7e5;
+      color:#c03426;
+    }
+    .cap-call-meta {
+      color:#5d7187;
+      font-size:12px;
+      line-height:1.55;
+      word-break:break-word;
+    }
+    .plan-audit-summary {
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));
+      gap:10px;
+      margin-bottom:10px;
+    }
+    .plan-audit-metric {
+      border:1px solid #e2ebf4;
+      border-radius:12px;
+      background:rgba(255,255,255,.9);
+      padding:10px;
+    }
+    .plan-audit-metric .label {
+      color:#687d92;
+      font-size:11px;
+      margin-bottom:6px;
+    }
+    .plan-audit-metric .value {
+      color:#1d3550;
+      font-size:20px;
+      font-weight:700;
+    }
+    .plan-audit-list { display:grid; gap:10px; }
+    .plan-audit-item {
+      border:1px solid #e2ebf4;
+      border-radius:12px;
+      background:rgba(255,255,255,.92);
+      padding:11px 12px;
+      display:grid;
+      gap:8px;
+    }
+    .plan-audit-item.warn { border-color:#f3deb0; background:linear-gradient(180deg,#fffdfa,#fffaf0); }
+    .plan-audit-item.error { border-color:#f2c5be; background:linear-gradient(180deg,#fffaf9,#fff3f2); }
+    .plan-audit-item.ok { border-color:#d7eadc; background:linear-gradient(180deg,#fbfffc,#f5fcf7); }
+    .plan-audit-head {
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .plan-audit-head strong {
+      margin:0;
+      font-size:13px;
+      color:#1e3854;
+    }
+    .audit-badge {
+      display:inline-flex;
+      align-items:center;
+      padding:3px 8px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:700;
+      background:#edf4fb;
+      color:#486178;
+      white-space:nowrap;
+    }
+    .audit-badge.ok { background:#e8f7ee; color:#2b8a3e; }
+    .audit-badge.warn { background:#fff4d8; color:#9a6700; }
+    .audit-badge.error { background:#ffe7e5; color:#c03426; }
+    .audit-meta {
+      color:#5d7187;
+      font-size:12px;
+      line-height:1.6;
+      word-break:break-word;
+    }
+    .audit-note-list {
+      margin:0;
+      padding-left:18px;
+      color:#405b76;
+      font-size:12px;
+      line-height:1.6;
+    }
+    .audit-pill-row {
+      display:flex;
+      gap:6px;
+      flex-wrap:wrap;
+    }
+    .audit-pill {
+      display:inline-flex;
+      align-items:center;
+      padding:3px 8px;
+      border-radius:999px;
+      background:#eef3f8;
+      color:#476078;
+      font-size:11px;
+      font-weight:700;
+      max-width:100%;
     }
 
     label { display: block; font-weight: 600; font-size: 12px; margin: 8px 0 4px; }
@@ -1792,7 +2042,7 @@
     <div id="infoDrawerBody" class="cfg-box"></div>
   </aside>
 
-  <script src="/app-shell.js?v=20260324c"></script>
+  <script src="/app-shell.js?v=20260326b"></script>
   <script src="/workflow_shared.js?v=20260324c"></script>
   <script>
 const taskId = new URLSearchParams(location.search).get('task_id') || '';
@@ -1834,6 +2084,9 @@ let eventDetails = {};
 let stageDefinitions = [];
 let leaderPlan = {};
 let conversationGroups = [];
+let skillCatalog = [];
+let capabilityCatalog = [];
+let capabilityBindings = [];
 let isExecuting = false;
 let livePollTimer = null;
 let providers = [];
@@ -1857,6 +2110,7 @@ let workflowAutoFitPending = true;
 let workflowUserAdjustedView = false;
 let activeConversationGroupKey = '';
 let activeConversationGroupState = null;
+let workflowPopoverStageKey = '';
 let refreshAllInFlight = false;
 let refreshCollaborationInFlight = false;
 let selectedHumanDecisionOption = '';
@@ -1899,6 +2153,37 @@ function providerModelLabel(providerId) {
   const item = (providers || []).find((provider) => provider.id === providerId);
   if (!item) return providerId;
   return item.model || item.label || item.id;
+}
+
+function capabilityDefinition(capabilityId) {
+  return (capabilityCatalog || []).find((item) => item.id === capabilityId) || null;
+}
+
+function capabilityLabel(capabilityId) {
+  const item = capabilityDefinition(capabilityId);
+  return item?.label || capabilityId || '-';
+}
+
+function capabilityBinding(capabilityId) {
+  return (capabilityBindings || []).find((item) => item?.capability_id === capabilityId) || null;
+}
+
+function skillDefinition(skillId) {
+  return (skillCatalog || []).find((item) => item.id === skillId) || null;
+}
+
+function skillLabel(skillId) {
+  const item = skillDefinition(skillId);
+  return item?.label || skillId || '-';
+}
+
+function labeledRegistryItems(ids, labelFn) {
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (!list.length) return '';
+  return list.map((id) => {
+    const label = labelFn(id);
+    return label && label !== id ? `${label}（${id}）` : String(id);
+  }).join('、');
 }
 
 function conversationStatusLabel(status) {
@@ -2094,6 +2379,321 @@ function formatJsonBlock(value, fallback = '暂无数据') {
   }
 }
 
+function capabilityEffectsFromPayload(payload) {
+  return Array.isArray(payload?.capability_effects) ? payload.capability_effects : [];
+}
+
+function requestedInvocationsFromPayload(payload) {
+  return Array.isArray(payload?.requested_capability_invocations) ? payload.requested_capability_invocations : [];
+}
+
+function capabilityDisplayName(effectOrRequest) {
+  if (!effectOrRequest || typeof effectOrRequest !== 'object') return '-';
+  const specLabel = effectOrRequest?.invocation?.contract?.label;
+  return String(specLabel || effectOrRequest.capability_label || effectOrRequest.capability_id || effectOrRequest.capability || '-');
+}
+
+function capabilityBindingTypeLabel(bindingType) {
+  const map = {
+    direct_model: '直连模型',
+    http_api: 'HTTP API',
+    workflow_api: '工作流 API',
+    internal_tool: '内置工具',
+  };
+  return map[String(bindingType || '')] || String(bindingType || '-');
+}
+
+function capabilityDefinitionLooksActive(definition) {
+  if (!definition || typeof definition !== 'object') return false;
+  if (Array.isArray(definition.supported_binding_types) && definition.supported_binding_types.length) return true;
+  if (definition.invocation_hint) return true;
+  if (definition.input_schema && Object.keys(definition.input_schema).length) return true;
+  if (definition.output_schema && Object.keys(definition.output_schema).length) return true;
+  return false;
+}
+
+function capabilityNeedsBinding(definition) {
+  if (!definition || typeof definition !== 'object') return false;
+  const types = Array.isArray(definition.supported_binding_types) ? definition.supported_binding_types : [];
+  return types.length > 0 && !types.includes('direct_model');
+}
+
+function recommendedCapabilitiesForStageType(stageType, options = {}) {
+  const normalized = window.MacsWorkflow.normalizeStageType(stageType);
+  return (capabilityCatalog || []).filter((item) => {
+    if (!item || item.enabled === false) return false;
+    const recommended = Array.isArray(item.recommended_stage_types) ? item.recommended_stage_types : [];
+    if (!recommended.includes(normalized)) return false;
+    if (options.onlyDefault && !item.default_stage_assignment) return false;
+    if (options.onlyActive && !capabilityDefinitionLooksActive(item)) return false;
+    return true;
+  });
+}
+
+function recommendedSkillsForStageType(stageType, options = {}) {
+  const normalized = window.MacsWorkflow.normalizeStageType(stageType);
+  return (skillCatalog || []).filter((item) => {
+    if (!item || item.enabled === false) return false;
+    const recommended = Array.isArray(item.recommended_stage_types) ? item.recommended_stage_types : [];
+    if (!recommended.includes(normalized)) return false;
+    if (options.onlyDefault && !item.default_stage_assignment) return false;
+    return true;
+  });
+}
+
+function stageSkillAudit(stage) {
+  const stageType = window.MacsWorkflow.normalizeStageType(stage?.stage_type || '');
+  const assignedIds = Array.isArray(stage?.skills) ? stage.skills.filter(Boolean) : [];
+  const assignedDefs = assignedIds.map((skillId) => skillDefinition(skillId)).filter(Boolean);
+  const unknown = assignedIds.filter((skillId) => !skillDefinition(skillId));
+  const disabled = assignedDefs.filter((definition) => definition.enabled === false);
+  const misplaced = assignedDefs.filter((definition) => {
+    const recommended = Array.isArray(definition.recommended_stage_types) ? definition.recommended_stage_types : [];
+    return recommended.length > 0 && !recommended.includes(stageType);
+  });
+  const missingDefaults = recommendedSkillsForStageType(stageType, { onlyDefault: true })
+    .filter((definition) => !assignedIds.includes(definition.id));
+  const assignedCapabilities = Array.isArray(stage?.capabilities) ? stage.capabilities : [];
+  const missingRequiredCapabilities = assignedDefs.flatMap((definition) => {
+    const required = Array.isArray(definition.required_capabilities) ? definition.required_capabilities : [];
+    const missing = required.filter((capabilityId) => !assignedCapabilities.includes(capabilityId));
+    if (!missing.length) return [];
+    return [{
+      skillId: definition.id,
+      skillLabel: definition.label || definition.id,
+      missing,
+    }];
+  });
+  const notes = [];
+  if (!assignedIds.length && missingDefaults.length) {
+    notes.push(`该阶段尚未显式分配 skill，建议至少补齐：${missingDefaults.map((item) => item.label || item.id).join('、')}`);
+  }
+  if (unknown.length) {
+    notes.push(`存在未注册 skill：${unknown.join('、')}`);
+  }
+  if (disabled.length) {
+    notes.push(`存在已禁用 skill：${disabled.map((item) => item.label || item.id).join('、')}`);
+  }
+  if (misplaced.length) {
+    notes.push(`存在与执行轮廓不匹配的 skill：${misplaced.map((item) => item.label || item.id).join('、')}`);
+  }
+  if (missingRequiredCapabilities.length) {
+    notes.push(`以下 skill 缺少必需能力：${missingRequiredCapabilities.map((item) => `${item.skillLabel} → ${item.missing.map(capabilityLabel).join(' / ')}`).join('、')}`);
+  }
+  const severity = unknown.length || missingRequiredCapabilities.length
+    ? 'error'
+    : (notes.length ? 'warn' : 'ok');
+  return {
+    stageName: String(stage?.name || ''),
+    stageLabel: String(stage?.label || stage?.name || '未命名阶段'),
+    stageType,
+    assignedIds,
+    assignedDefs,
+    defaultDefs: recommendedSkillsForStageType(stageType, { onlyDefault: true }),
+    missingDefaults,
+    unknown,
+    disabled,
+    misplaced,
+    missingRequiredCapabilities,
+    notes,
+    severity,
+  };
+}
+
+function stageCapabilityAudit(stage) {
+  const stageType = window.MacsWorkflow.normalizeStageType(stage?.stage_type || '');
+  const assignedIds = Array.isArray(stage?.capabilities) ? stage.capabilities.filter(Boolean) : [];
+  const assignedDefs = assignedIds.map((capabilityId) => capabilityDefinition(capabilityId)).filter(Boolean);
+  const unknown = assignedIds.filter((capabilityId) => !capabilityDefinition(capabilityId));
+  const misplaced = assignedDefs.filter((definition) => {
+    const recommended = Array.isArray(definition.recommended_stage_types) ? definition.recommended_stage_types : [];
+    return recommended.length > 0 && !recommended.includes(stageType);
+  });
+  const missingDefaults = recommendedCapabilitiesForStageType(stageType, { onlyDefault: true })
+    .filter((definition) => !assignedIds.includes(definition.id));
+  const activeRecommended = recommendedCapabilitiesForStageType(stageType, { onlyActive: true });
+  const activeAssigned = assignedDefs.filter((definition) => capabilityDefinitionLooksActive(definition));
+  const missingBindings = activeAssigned
+    .filter((definition) => capabilityNeedsBinding(definition) && !capabilityBinding(definition.id))
+    .map((definition) => ({
+      id: definition.id,
+      label: definition.label || definition.id,
+      bindingTypes: Array.isArray(definition.supported_binding_types) ? definition.supported_binding_types : [],
+    }));
+  const notes = [];
+  if (!assignedIds.length && missingDefaults.length) {
+    notes.push(`该阶段尚未显式分配能力，建议至少补齐：${missingDefaults.map((item) => item.label || item.id).join('、')}`);
+  }
+  if (unknown.length) {
+    notes.push(`存在未注册能力：${unknown.join('、')}`);
+  }
+  if (misplaced.length) {
+    notes.push(`存在与执行轮廓不匹配的能力：${misplaced.map((item) => item.label || item.id).join('、')}`);
+  }
+  if (!activeAssigned.length && activeRecommended.some((definition) => !definition.default_stage_assignment)) {
+    notes.push(`该阶段没有显式可调用能力，若需要外部执行请考虑挂载：${activeRecommended.filter((definition) => !definition.default_stage_assignment).map((item) => item.label || item.id).join('、')}`);
+  }
+  if (missingBindings.length) {
+    notes.push(`以下能力缺少执行绑定：${missingBindings.map((item) => `${item.label}（${item.bindingTypes.map(capabilityBindingTypeLabel).join(' / ')}）`).join('、')}`);
+  }
+  const severity = unknown.length || missingBindings.length
+    ? 'error'
+    : (notes.length ? 'warn' : 'ok');
+  return {
+    stageName: String(stage?.name || ''),
+    stageLabel: String(stage?.label || stage?.name || '未命名阶段'),
+    stageType,
+    assignedIds,
+    assignedDefs,
+    defaultDefs: recommendedCapabilitiesForStageType(stageType, { onlyDefault: true }),
+    missingDefaults,
+    activeAssigned,
+    activeRecommended,
+    unknown,
+    misplaced,
+    missingBindings,
+    notes,
+    severity,
+  };
+}
+
+function renderLeaderSkillAuditHtml(stages) {
+  const audits = (stages || []).map((stage) => stageSkillAudit(stage));
+  if (!audits.length) {
+    return '<div class="detail-meta">当前没有可审计的阶段 skill 定义。</div>';
+  }
+  const configuredCount = audits.filter((item) => item.assignedIds.length > 0).length;
+  const warningCount = audits.filter((item) => item.severity === 'warn').length;
+  const errorCount = audits.filter((item) => item.severity === 'error').length;
+  const defaultGapCount = audits.reduce((sum, item) => sum + item.missingDefaults.length, 0);
+  return `
+    <div class="plan-audit-summary">
+      <div class="plan-audit-metric"><div class="label">显式配置</div><div class="value">${configuredCount}/${audits.length}</div></div>
+      <div class="plan-audit-metric"><div class="label">待补默认</div><div class="value">${defaultGapCount}</div></div>
+      <div class="plan-audit-metric"><div class="label">待完善</div><div class="value">${warningCount}</div></div>
+      <div class="plan-audit-metric"><div class="label">需修复</div><div class="value">${errorCount}</div></div>
+    </div>
+    <div class="plan-audit-list">
+      ${audits.map((audit) => {
+        const assignedText = audit.assignedIds.length ? labeledRegistryItems(audit.assignedIds, skillLabel) : '未显式分配';
+        const defaultText = audit.defaultDefs.length ? labeledRegistryItems(audit.defaultDefs.map((item) => item.id), skillLabel) : '无默认建议';
+        const noteHtml = audit.notes.length
+          ? `<ul class="audit-note-list">${audit.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>`
+          : '<div class="audit-meta">当前阶段的 skill 分配与默认建议基本一致。</div>';
+        const pills = [
+          `执行轮廓 ${audit.stageType}`,
+          audit.assignedIds.length ? `显式 skill ${audit.assignedIds.length}` : '显式 skill 0',
+          audit.missingRequiredCapabilities.length ? `缺能力 ${audit.missingRequiredCapabilities.length}` : '',
+        ].filter(Boolean);
+        return `
+          <div class="plan-audit-item ${escapeHtml(audit.severity)}">
+            <div class="plan-audit-head">
+              <strong>${escapeHtml(audit.stageLabel)}</strong>
+              <span class="audit-badge ${escapeHtml(audit.severity)}">${escapeHtml(audit.severity === 'ok' ? '已对齐' : (audit.severity === 'warn' ? '待完善' : '需修复'))}</span>
+            </div>
+            <div class="audit-pill-row">${pills.map((pill) => `<span class="audit-pill">${escapeHtml(pill)}</span>`).join('')}</div>
+            <div class="audit-meta">已分配：${escapeHtml(assignedText)}</div>
+            <div class="audit-meta">默认建议：${escapeHtml(defaultText)}</div>
+            ${noteHtml}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderLeaderCapabilityAuditHtml(stages) {
+  const audits = (stages || []).map((stage) => stageCapabilityAudit(stage));
+  if (!audits.length) {
+    return '<div class="detail-meta">当前没有可审计的阶段能力定义。</div>';
+  }
+  const configuredCount = audits.filter((item) => item.assignedIds.length > 0).length;
+  const activeCount = audits.filter((item) => item.activeAssigned.length > 0).length;
+  const warningCount = audits.filter((item) => item.severity === 'warn').length;
+  const errorCount = audits.filter((item) => item.severity === 'error').length;
+  const bindingGapCount = audits.reduce((sum, item) => sum + item.missingBindings.length, 0);
+  return `
+    <div class="plan-audit-summary">
+      <div class="plan-audit-metric"><div class="label">显式配置</div><div class="value">${configuredCount}/${audits.length}</div></div>
+      <div class="plan-audit-metric"><div class="label">主动能力阶段</div><div class="value">${activeCount}</div></div>
+      <div class="plan-audit-metric"><div class="label">待补风险</div><div class="value">${warningCount + errorCount}</div></div>
+      <div class="plan-audit-metric"><div class="label">绑定缺口</div><div class="value">${bindingGapCount}</div></div>
+    </div>
+      <div class="plan-audit-list">
+      ${audits.map((audit) => {
+        const assignedText = audit.assignedIds.length ? labeledRegistryItems(audit.assignedIds, capabilityLabel) : '未显式分配';
+        const defaultText = audit.defaultDefs.length ? labeledRegistryItems(audit.defaultDefs.map((item) => item.id), capabilityLabel) : '无默认建议';
+        const noteHtml = audit.notes.length
+          ? `<ul class="audit-note-list">${audit.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>`
+          : '<div class="audit-meta">当前阶段的能力分配与默认建议基本一致。</div>';
+        const pills = [
+          `执行轮廓 ${audit.stageType}`,
+          audit.activeAssigned.length ? `主动能力 ${audit.activeAssigned.length}` : '主动能力 0',
+          audit.missingBindings.length ? `缺绑定 ${audit.missingBindings.length}` : '',
+        ].filter(Boolean);
+        return `
+          <div class="plan-audit-item ${escapeHtml(audit.severity)}">
+            <div class="plan-audit-head">
+              <strong>${escapeHtml(audit.stageLabel)}</strong>
+              <span class="audit-badge ${escapeHtml(audit.severity)}">${escapeHtml(audit.severity === 'ok' ? '已对齐' : (audit.severity === 'warn' ? '待完善' : '需修复'))}</span>
+            </div>
+            <div class="audit-pill-row">${pills.map((pill) => `<span class="audit-pill">${escapeHtml(pill)}</span>`).join('')}</div>
+            <div class="audit-meta">已分配：${escapeHtml(assignedText)}</div>
+            <div class="audit-meta">默认建议：${escapeHtml(defaultText)}</div>
+            ${noteHtml}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function capabilityInvocationSummary(payload) {
+  const effects = capabilityEffectsFromPayload(payload);
+  const requested = requestedInvocationsFromPayload(payload);
+  const count = Math.max(effects.length, requested.length);
+  if (!count) return '';
+  const primary = effects[0] || requested[0] || {};
+  const action = primary?.invocation?.request?.input?.action || '';
+  const bindingType = primary?.binding_type || primary?.invocation?.binding?.binding_type || primary?.invocation?.spec?.binding?.binding_type || '';
+  const status = primary?.status || (effects.length ? '已执行' : '待执行');
+  return [capabilityDisplayName(primary), action, bindingType, status].filter(Boolean).join(' · ');
+}
+
+function renderCapabilityEffectsHtml(payload) {
+  const effects = capabilityEffectsFromPayload(payload);
+  const requested = requestedInvocationsFromPayload(payload);
+  if (!effects.length && !requested.length) return '<div class="detail-meta">当前阶段未记录能力调用。</div>';
+  const rows = [];
+  effects.forEach((effect) => {
+    const action = effect?.invocation?.request?.input?.action || '';
+    const bindingType = effect?.binding_type || effect?.invocation?.spec?.binding?.binding_type || '-';
+    const note = Array.isArray(effect?.notes) && effect.notes.length ? effect.notes.join('；') : '';
+    rows.push(`
+      <div class="cap-call-item">
+        <div class="cap-call-head">
+          <span class="cap-call-name">${escapeHtml(capabilityDisplayName(effect))}</span>
+          <span class="cap-call-badge ${escapeHtml(String(effect?.status || 'applied'))}">${escapeHtml(String(effect?.status || '已执行'))}</span>
+        </div>
+        <div class="cap-call-meta">action: ${escapeHtml(action || '-')} · binding: ${escapeHtml(bindingType || '-')}</div>
+        ${note ? `<div class="cap-call-meta">${escapeHtml(note)}</div>` : ''}
+      </div>
+    `);
+  });
+  requested.forEach((request) => {
+    rows.push(`
+      <div class="cap-call-item">
+        <div class="cap-call-head">
+          <span class="cap-call-name">${escapeHtml(capabilityDisplayName(request))}</span>
+          <span class="cap-call-badge pending">已请求</span>
+        </div>
+        <div class="cap-call-meta">input: ${escapeHtml(shortText(formatJsonBlock(request.input || {}, '{}'), 120))}</div>
+      </div>
+    `);
+  });
+  return `<div class="cap-call-list">${rows.join('')}</div>`;
+}
+
 function actorInitials(label) {
   const raw = String(label || '').trim();
   if (!raw) return 'AI';
@@ -2156,7 +2756,7 @@ function buildTaskDataSignature(task, plan, stages) {
     task?.updated_at || 0,
     task?.context?.spec || '',
     plan?.summary || '',
-    (stages || []).map((stage) => [stage.name, stage.label, stage.stage_type, stage.role || '']),
+    (stages || []).map((stage) => [stage.name, stage.label, stage.stage_type, stage.execution_profile || '', stage.stage_semantics || '', stage.role || '']),
   ]);
 }
 
@@ -2179,12 +2779,17 @@ function buildConfigDataSignature(configs, details, stages, defaultProvider, gro
     Object.entries(details || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [
       key,
       value?.stage_type || '',
+      value?.execution_profile || '',
+      value?.stage_semantics || '',
       value?.effective_prompt || '',
       value?.default_prompt_template || '',
     ]),
-    (stages || []).map((stage) => [stage.name, stage.label, stage.stage_type, stage.role || '', stage.capabilities || []]),
+    (stages || []).map((stage) => [stage.name, stage.label, stage.stage_type, stage.execution_profile || '', stage.stage_semantics || '', stage.role || '', stage.skills || [], stage.capabilities || []]),
     (groups || []).map((group) => [group.key || group.id || '', group.label || group.title || '', group.stage_names || group.stages || []]),
     plan?.summary || '',
+    (skillCatalog || []).map((item) => [item.id, item.label, item.enabled !== false, item.default_stage_assignment, item.required_capabilities || []]),
+    (capabilityCatalog || []).map((item) => [item.id, item.label, item.enabled !== false, item.default_stage_assignment, item.supported_binding_types || []]),
+    (capabilityBindings || []).map((item) => [item.id || '', item.capability_id || '', item.binding_type || '']),
   ]);
 }
 
@@ -2401,6 +3006,20 @@ function extractStageSnapshot(stageKey) {
   return { stageEvents, latestEvent, latestError, latestOutput, latestReview, latestResolved };
 }
 
+function latestCapabilityEvent(stageKey) {
+  const stageEvents = taskEvents.filter((event) => event?.payload?.stage === stageKey);
+  return [...stageEvents].reverse().find((event) => {
+    const payload = event?.payload || {};
+    return capabilityEffectsFromPayload(payload).length || requestedInvocationsFromPayload(payload).length;
+  }) || null;
+}
+
+function stageLatestTimelineEventId(stageKey) {
+  const capabilityEvent = latestCapabilityEvent(stageKey);
+  if (capabilityEvent?.event_id) return capabilityEvent.event_id;
+  return [...taskEvents].reverse().find((event) => event?.payload?.stage === stageKey)?.event_id || '';
+}
+
 function lastErrorTone(text) {
   const raw = String(text || '');
   if (!raw || raw === '无阻塞') return '正常';
@@ -2608,6 +3227,8 @@ function renderLeaderPlanHtml() {
   const groups = Array.isArray(plan?.conversation_groups) ? plan.conversation_groups : [];
   const planEvent = latestPlanningEvent();
   const snapshotPath = leaderPlanSnapshotPath();
+  const skillAuditHtml = renderLeaderSkillAuditHtml(stages);
+  const capabilityAuditHtml = renderLeaderCapabilityAuditHtml(stages);
   if (!stages.length && !planEvent) {
     return '<div class="hint">当前任务还没有 Leader 规划信息。执行 Step 后，Leader 完成流程设计时会在这里展示规划结果。</div>';
   }
@@ -2634,11 +3255,14 @@ function renderLeaderPlanHtml() {
   const stageHtml = stages.length
     ? stages.map((stage, index) => {
         const depends = Array.isArray(stage?.depends_on) ? stage.depends_on : [];
+        const skills = Array.isArray(stage?.skills) ? stage.skills : [];
         const caps = Array.isArray(stage?.capabilities) ? stage.capabilities : [];
+        const skillText = labeledRegistryItems(skills, skillLabel);
+        const capabilityText = labeledRegistryItems(caps, capabilityLabel);
         const groupLabel = typeof stage?.conversation_group === 'object'
           ? (stage.conversation_group?.label || stage.conversation_group?.key || '')
           : (stage?.conversation_group || '');
-        return `<div class="event-item"><strong>${escapeHtml(`${index + 1}. ${stage.label || stage.name || '未命名阶段'}`)}</strong><div class="event-meta">阶段标识：${escapeHtml(stage.name || '-')}</div><div class="event-meta">阶段类型：${escapeHtml(stage.stage_type || '-')}</div><div class="event-meta">角色：${escapeHtml(stage.role || '未指定')}</div>${groupLabel ? `<div class="event-meta">所属分组：${escapeHtml(groupLabel)}</div>` : ''}${depends.length ? `<div class="event-meta">依赖：${escapeHtml(depends.join(' / '))}</div>` : ''}${caps.length ? `<div class="event-meta">能力：${escapeHtml(caps.join(', '))}</div>` : ''}${stage.acceptance_criteria ? `<div class="event-meta">验收：${escapeHtml(shortText(stage.acceptance_criteria, 140))}</div>` : ''}</div>`;
+        return `<div class="event-item"><strong>${escapeHtml(`${index + 1}. ${stage.label || stage.name || '未命名阶段'}`)}</strong><div class="event-meta">阶段标识：${escapeHtml(stage.name || '-')}</div><div class="event-meta">执行轮廓：${escapeHtml(stage.execution_profile || stage.stage_type || '-')}</div>${stage.stage_semantics ? `<div class="event-meta">阶段语义：${escapeHtml(stage.stage_semantics)}</div>` : ''}<div class="event-meta">角色：${escapeHtml(stage.role || '未指定')}</div>${groupLabel ? `<div class="event-meta">所属分组：${escapeHtml(groupLabel)}</div>` : ''}${depends.length ? `<div class="event-meta">依赖：${escapeHtml(depends.join(' / '))}</div>` : ''}${skills.length ? `<div class="event-meta">技能：${escapeHtml(skillText)}</div>` : ''}${caps.length ? `<div class="event-meta">能力：${escapeHtml(capabilityText)}</div>` : ''}${stage.acceptance_criteria ? `<div class="event-meta">验收：${escapeHtml(shortText(stage.acceptance_criteria, 140))}</div>` : ''}</div>`;
       }).join('')
     : '<div class="hint">当前没有可展示的阶段定义。</div>';
   return `
@@ -2651,6 +3275,14 @@ function renderLeaderPlanHtml() {
       <div class="detail-card prompt">
         <strong>阶段设计</strong>
         <div class="timeline" style="margin-top:0;max-height:none;">${stageHtml}</div>
+      </div>
+      <div class="detail-card audit">
+        <strong>Skill 策略审计</strong>
+        ${skillAuditHtml}
+      </div>
+      <div class="detail-card audit">
+        <strong>Capability 执行审计</strong>
+        ${capabilityAuditHtml}
       </div>
       <div class="detail-card">
         <strong>Leader 原始流程定义</strong>
@@ -2743,6 +3375,100 @@ function renderTaskInsights(events, stageState) {
   ].map((card) => `<div class="insight-card"><div class="label">${escapeHtml(card.label)}</div><div class="value">${escapeHtml(card.value)}</div><div class="desc">${escapeHtml(card.desc)}</div></div>`).join('');
 }
 
+function renderWorkflowPopover(vm) {
+  if (!workflowPopoverStageKey || !isStageEvent(workflowPopoverStageKey)) return '';
+  const node = (vm?.nodes || []).find((item) => item.id === workflowPopoverStageKey);
+  const stage = currentStageMap()[workflowPopoverStageKey];
+  if (!node || !stage) return '';
+  const snapshot = extractStageSnapshot(workflowPopoverStageKey);
+  const outputPayload = snapshot.latestOutput?.payload || snapshot.latestEvent?.payload || {};
+  const capabilityEvent = latestCapabilityEvent(workflowPopoverStageKey);
+  const capabilityPayload = capabilityEvent?.payload || outputPayload;
+  const capabilityHtml = renderCapabilityEffectsHtml(capabilityPayload);
+  const review = snapshot.latestReview?.payload || {};
+  const reviewText = review.review_status === 'skipped'
+    ? '评审已跳过'
+    : (review.pass === true ? '评审通过' : (review.pass === false ? '评审未通过' : '评审待执行'));
+  const feedbackText = snapshot.latestError?.payload?.feedback
+    || snapshot.latestError?.payload?.error
+    || snapshot.latestError?.payload?.reason
+    || review.feedback
+    || '';
+  const provider = effectiveEventConfigs?.[workflowPopoverStageKey]?.model_provider || defaultModelProvider;
+  const modelText = provider ? providerLabel(provider) : '未绑定模型';
+  const rightSpace = Number(vm?.width || 0) - (Number(node.x || 0) + Number(node.width || 0));
+  const placeLeft = rightSpace < 340;
+  const popoverWidth = 320;
+  const top = Math.max(14, Math.min(Number(node.y || 0), Number(vm?.height || 0) - 274));
+  const left = placeLeft
+    ? Math.max(14, Number(node.x || 0) - popoverWidth - 16)
+    : Math.min(Math.max(14, Number(node.x || 0) + Number(node.width || 0) + 16), Math.max(14, Number(vm?.width || 0) - popoverWidth - 14));
+  return `
+    <div class="workflow-popover ${placeLeft ? 'left' : ''}" style="left:${left}px;top:${top}px;" onclick="event.stopPropagation()">
+      <div class="workflow-popover-head">
+        <div>
+          <strong>${escapeHtml(stage.label || workflowPopoverStageKey)}</strong>
+          <div class="workflow-popover-subtitle">${escapeHtml(stage.execution_profile || stage.stage_type || '-')} · ${escapeHtml(modelText)}${stage.stage_semantics ? ` · ${escapeHtml(stage.stage_semantics)}` : ''}</div>
+        </div>
+        <span class="audit-badge ${escapeHtml((node.capabilityBadge?.status || 'assigned'))}">${escapeHtml(node.capabilityBadge?.text || '能力详情')}</span>
+      </div>
+      <div class="workflow-popover-meta">
+        <div>已分配能力：${escapeHtml((stage.capabilities || []).map(capabilityLabel).join('、') || '未显式分配')}</div>
+        <div>最近评审：${escapeHtml(reviewText)}</div>
+        ${feedbackText ? `<div>最近反馈：${escapeHtml(shortText(feedbackText, 120))}</div>` : ''}
+      </div>
+      ${capabilityHtml}
+      <div class="workflow-popover-actions">
+        <button type="button" onclick="openWorkflowStageDetail()">打开详情</button>
+        <button type="button" class="secondary" onclick="focusTimelineForStage()">定位时间轴</button>
+        <button type="button" class="secondary" onclick="closeWorkflowPopover()">关闭</button>
+      </div>
+    </div>
+  `;
+}
+
+function closeWorkflowPopover() {
+  if (!workflowPopoverStageKey) return;
+  workflowPopoverStageKey = '';
+  renderGraph();
+}
+
+function focusTimelineForStage(stageKey = workflowPopoverStageKey) {
+  if (!stageKey || !isStageEvent(stageKey)) return;
+  workflowPopoverStageKey = stageKey;
+  selectedEventKey = stageKey;
+  selectedTimelineEventId = stageLatestTimelineEventId(stageKey);
+  renderTimeline();
+  renderGraph();
+}
+
+function showWorkflowNodePopover(stageKey, options = {}) {
+  if (Date.now() < suppressNodeClickUntil) return;
+  if (!stageKey || !isStageEvent(stageKey)) return;
+  const sameNode = workflowPopoverStageKey === stageKey;
+  selectedEventKey = stageKey;
+  selectedTimelineEventId = stageLatestTimelineEventId(stageKey);
+  workflowPopoverStageKey = (sameNode && !options.force) ? '' : stageKey;
+  renderTimeline();
+  renderGraph();
+  if (options.openDrawer) {
+    openConfigDrawer();
+    renderConfigEditor(true);
+  }
+}
+
+function openWorkflowStageDetail(stageKey = workflowPopoverStageKey) {
+  if (Date.now() < suppressNodeClickUntil) return;
+  if (!stageKey || !isStageEvent(stageKey)) return;
+  workflowPopoverStageKey = stageKey;
+  selectedEventKey = stageKey;
+  selectedTimelineEventId = stageLatestTimelineEventId(stageKey);
+  openConfigDrawer();
+  renderTimeline();
+  renderGraph();
+  renderConfigEditor(true);
+}
+
 function updateWorkflowTransform() {
   const scene = document.querySelector('#flowGraph .workflow-scene');
   const scaleLabel = document.getElementById('workflowScaleLabel');
@@ -2812,7 +3538,11 @@ function bindWorkflowInteractions(vm) {
     renderGraph();
   };
   canvas.onmousedown = (event) => {
-    if (event.target.closest('.workflow-node')) return;
+    if (event.target.closest('.workflow-node, .workflow-popover')) return;
+    if (workflowPopoverStageKey) {
+      workflowPopoverStageKey = '';
+      renderGraph();
+    }
     panState = {
       startX: event.clientX,
       startY: event.clientY,
@@ -2843,6 +3573,10 @@ function bindWorkflowInteractions(vm) {
   };
   canvas.querySelectorAll('.workflow-node[data-node-id]').forEach((nodeEl) => {
     nodeEl.onmousedown = (event) => {
+      if (event.target.closest('.workflow-node-badge')) {
+        event.stopPropagation();
+        return;
+      }
       const node = vm.nodes.find((item) => item.id === nodeEl.dataset.nodeId);
       if (!node) return;
       dragState = {
@@ -2853,6 +3587,11 @@ function bindWorkflowInteractions(vm) {
         originY: node.y,
       };
       event.stopPropagation();
+    };
+    nodeEl.ondblclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openWorkflowStageDetail(nodeEl.dataset.nodeId || '');
     };
   });
   const zoomInBtn = document.getElementById('workflowZoomIn');
@@ -2929,7 +3668,7 @@ function renderGraph() {
     return;
   }
   if (!hasAvailableProviders()) {
-    flow.innerHTML = '<div class="hint">尚未注册可用模型。请先前往 /models.html 配置凭据、模型，并至少为一个阶段绑定 LLM。</div>';
+    flow.innerHTML = '<div class="hint">尚未注册可用模型。请先前往 /models.html 配置凭据、模型，并至少为一个执行轮廓绑定 LLM。</div>';
     document.getElementById('runHint').textContent = '未配置模型，无法执行';
     setWorkflowToolbarEnabled(false);
     return;
@@ -3012,7 +3751,7 @@ function renderGraph() {
     const clickable = node.editable ? 'clickable' : '';
     const selected = selectedEventKey === node.id ? 'selected' : '';
     const hot = vm.hotNodeId === node.id ? 'hot' : '';
-    const action = node.editable ? `onclick="setEventFocus('${node.id}')"` : '';
+    const action = node.editable ? `onclick="showWorkflowNodePopover('${node.id}')"` : '';
     const submeta = (node.submeta || []).map((chip) => {
       if (chip && typeof chip === 'object') {
         const tone = chip.tone ? ` ${chip.tone}` : '';
@@ -3022,9 +3761,12 @@ function renderGraph() {
       return `<span class="workflow-chip ${node.status}">${escapeHtml(chip)}</span>`;
     }).join('');
     const metaText = node.metaLabel ? `${node.metaLabel} · ${node.meta}` : node.meta;
-    return `<button data-node-id="${node.id}" type="button" class="workflow-node ${node.status} ${clickable} ${selected} ${hot}" style="left:${node.x}px;top:${node.y}px;width:${Math.round(node.width || 162)}px;height:${Math.round(node.height || 108)}px;" ${action}><div class="name"><span class="workflow-icon">${window.MacsWorkflow.stageIcon(node.stageType || node.id)}</span><span class="name-text">${escapeHtml(node.title)}</span></div>${node.role ? `<div class="role">角色 · ${escapeHtml(node.role)}</div>` : ''}<div class="meta">${escapeHtml(metaText)}</div>${node.phase ? `<div class="phase ${escapeHtml(node.phaseTone || 'active')}">${escapeHtml(node.phase)}</div>` : ''}${submeta ? `<div class="submeta">${submeta}</div>` : ''}</button>`;
+    const capabilityBadge = node.capabilityBadge
+      ? `<span class="workflow-node-badge ${escapeHtml(node.capabilityBadge.status || 'assigned')}" title="${escapeHtml(node.capabilityBadge.hint || node.capabilityBadge.text || '')}" onclick="event.stopPropagation(); showWorkflowNodePopover('${node.id}', { force: true })">${escapeHtml(node.capabilityBadge.text || '能力')}</span>`
+      : '';
+    return `<button data-node-id="${node.id}" type="button" class="workflow-node ${node.status} ${clickable} ${selected} ${hot}" style="left:${node.x}px;top:${node.y}px;width:${Math.round(node.width || 162)}px;height:${Math.round(node.height || 108)}px;" ${action}>${capabilityBadge}<div class="name"><span class="workflow-icon">${window.MacsWorkflow.stageIcon(node.stageType || node.id)}</span><span class="name-text">${escapeHtml(node.title)}</span></div>${node.role ? `<div class="role">角色 · ${escapeHtml(node.role)}</div>` : ''}<div class="meta">${escapeHtml(metaText)}</div>${node.phase ? `<div class="phase ${escapeHtml(node.phaseTone || 'active')}">${escapeHtml(node.phase)}</div>` : ''}${submeta ? `<div class="submeta">${submeta}</div>` : ''}</button>`;
   });
-  flow.innerHTML = svg.join('') + nodesHtml.join('') + '</div>' + renderMiniMap(vm);
+  flow.innerHTML = svg.join('') + nodesHtml.join('') + renderWorkflowPopover(vm) + '</div>' + renderMiniMap(vm);
   updateWorkflowTransform();
   bindWorkflowInteractions(vm);
   const toggleBtn = document.getElementById('workflowToggleGroup');
@@ -3085,8 +3827,9 @@ function renderTimeline() {
     const label = EVENT_LABELS[event.event_type] || event.event_type;
     const stage = event.payload?.label || event.payload?.stage || event.payload?.event || '';
     const detail = event.payload?.current_file || event.payload?.message || event.payload?.feedback || event.payload?.error || event.payload?.reason || '';
+    const capabilityText = capabilityInvocationSummary(event.payload || {});
     const active = selectedTimelineEventId === event.event_id ? ' active' : '';
-    return `<button type="button" class="event-item${active}" data-event-id="${event.event_id}" data-stage="${escapeHtml(event.payload?.stage || '')}"><strong>${escapeHtml(label)}</strong><div class="event-meta">${escapeHtml(stage)}</div>${detail ? `<div class="event-meta">${escapeHtml(shortText(detail, 88))}</div>` : ''}<div class="event-meta">${asISO(event.timestamp)}</div></button>`;
+    return `<button type="button" class="event-item${active}" data-event-id="${event.event_id}" data-stage="${escapeHtml(event.payload?.stage || '')}"><strong>${escapeHtml(label)}</strong><div class="event-meta">${escapeHtml(stage)}</div>${detail ? `<div class="event-meta">${escapeHtml(shortText(detail, 88))}</div>` : ''}${capabilityText ? `<div class="event-meta">能力调用: ${escapeHtml(shortText(capabilityText, 96))}</div>` : ''}<div class="event-meta">${asISO(event.timestamp)}</div></button>`;
   }).join('');
   box.innerHTML = toolbar + itemsHtml;
   box.querySelectorAll('[data-event-id]').forEach((element) => {
@@ -3125,7 +3868,8 @@ function renderStageOutputs() {
       ? '评审: 跳过'
       : (review.pass === true ? '评审: 通过' : (review.pass === false ? '评审: 未通过' : '评审: 待评估'));
     const feedback = review.feedback || '-';
-    return `<div class="event-item"><strong>${escapeHtml(stage.label)} / ${escapeHtml(EVENT_LABELS[event?.event_type] || event?.event_type || outputEvent.event_type)}</strong><div class="event-meta">角色: ${escapeHtml(role)}</div><div class="event-meta">阶段类型: ${escapeHtml(stage.stage_type)}</div><div class="event-meta">${escapeHtml(reviewText)}</div><div class="event-meta">反馈: ${escapeHtml(feedback)}</div><pre style="margin-top:6px;max-height:130px;">${escapeHtml(JSON.stringify(summary, null, 2))}</pre></div>`;
+    const capabilityText = capabilityInvocationSummary(outputEvent.payload || {});
+    return `<div class="event-item"><strong>${escapeHtml(stage.label)} / ${escapeHtml(EVENT_LABELS[event?.event_type] || event?.event_type || outputEvent.event_type)}</strong><div class="event-meta">角色: ${escapeHtml(role)}</div><div class="event-meta">执行轮廓: ${escapeHtml(stage.execution_profile || stage.stage_type)}</div>${stage.stage_semantics ? `<div class="event-meta">阶段语义: ${escapeHtml(stage.stage_semantics)}</div>` : ''}<div class="event-meta">${escapeHtml(reviewText)}</div><div class="event-meta">反馈: ${escapeHtml(feedback)}</div>${capabilityText ? `<div class="event-meta">能力调用: ${escapeHtml(capabilityText)}</div>` : ''}<pre style="margin-top:6px;max-height:130px;">${escapeHtml(JSON.stringify(summary, null, 2))}</pre></div>`;
   }).join('') || '<div class="hint">暂无阶段输出</div>';
   lastStageOutputsSignature = sig;
 }
@@ -3182,7 +3926,7 @@ function renderArtifacts() {
         seen.add(uri);
         artifacts.push({
           uri,
-          label: artifact?.label || artifact?.name || uri,
+          label: artifact?.label || artifact?.name || (artifact?.type === 'capability_request' ? `能力请求 / ${basename(uri)}` : uri),
           stage: stage.label || stage.name || '',
         });
       });
@@ -3196,7 +3940,7 @@ function renderArtifacts() {
         seen.add(uri);
         artifacts.push({
           uri,
-          label: artifact?.label || artifact?.name || uri,
+          label: artifact?.label || artifact?.name || (artifact?.type === 'capability_request' ? `能力请求 / ${basename(uri)}` : uri),
           stage: event.payload?.stage || '',
         });
       });
@@ -3777,6 +4521,7 @@ function renderConfigEditor(force = false) {
   const latestOutput = latestPayload.output_summary || latestPayload.output || latestPayload.result || latestPayload.artifacts || {};
   const errorText = snapshot.latestError?.payload?.error || snapshot.latestError?.payload?.feedback || snapshot.latestError?.payload?.reason || '';
   const reviewText = snapshot.latestEvent?.payload?.review?.feedback || latestPayload.feedback || '';
+  const capabilityHtml = renderCapabilityEffectsHtml(snapshot.latestOutput?.payload || latestPayload);
   const providerOptions = ['<option value="">(按路由默认)</option>']
     .concat((providers || []).map((provider) => `<option value="${provider.id}" ${cfg.model_provider === provider.id ? 'selected' : ''}>${escapeHtml(providerLabel(provider.id))}</option>`))
     .join('');
@@ -3842,6 +4587,10 @@ function renderConfigEditor(force = false) {
       <div class="detail-card output">
         <strong>最近输出摘要</strong>
         <pre>${escapeHtml(formatJsonBlock(latestOutput, '暂无输出摘要'))}</pre>
+      </div>
+      <div class="detail-card capability">
+        <strong>能力调用记录</strong>
+        ${capabilityHtml}
       </div>
       <div class="detail-card prompt">
         <strong>当前生效提示词</strong>
@@ -3916,6 +4665,30 @@ async function fetchProviders() {
   const resp = await fetch(noCacheUrl('/models'), { cache: 'no-store' });
   const data = await resp.json();
   return data.providers || [];
+}
+
+async function fetchCapabilities() {
+  const resp = await fetch(noCacheUrl('/capabilities'), { cache: 'no-store' });
+  if (!resp.ok) {
+    capabilityCatalog = [];
+    capabilityBindings = [];
+    return { catalog: [], bindings: [] };
+  }
+  const data = await resp.json();
+  capabilityCatalog = Array.isArray(data.catalog) ? data.catalog : [];
+  capabilityBindings = Array.isArray(data.bindings) ? data.bindings : [];
+  return data;
+}
+
+async function fetchSkills() {
+  const resp = await fetch(noCacheUrl('/skills'), { cache: 'no-store' });
+  if (!resp.ok) {
+    skillCatalog = [];
+    return { catalog: [] };
+  }
+  const data = await resp.json();
+  skillCatalog = Array.isArray(data.catalog) ? data.catalog : [];
+  return data;
 }
 
 async function saveEventConfig() {
@@ -4144,6 +4917,8 @@ async function refreshAll() {
     await Promise.all([
       fetchEventConfigs(),
       fetchCollaboration(),
+      fetchCapabilities(),
+      fetchSkills(),
     ]);
     commitViewUpdate();
   } finally {
@@ -4171,7 +4946,11 @@ async function refreshCollaborationPanel() {
     document.getElementById('flowGraph').innerHTML = '<div class="hint">请从任务中心打开任务详情，或在 URL 中传入 task_id。</div>';
     return;
   }
-  providers = await fetchProviders();
+  [providers] = await Promise.all([
+    fetchProviders(),
+    fetchCapabilities(),
+    fetchSkills(),
+  ]);
   renderSetupBanner();
   if (!hasAvailableProviders()) {
     renderGraph();

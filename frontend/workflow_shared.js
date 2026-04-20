@@ -1,10 +1,11 @@
 (function () {
   const DEFAULT_STAGES = [
-    { name: 'requirements', stage_type: 'requirements', label: '需求分析' },
-    { name: 'architecture', stage_type: 'architecture', label: '架构设计' },
-    { name: 'coding', stage_type: 'coding', label: '编码实现' },
-    { name: 'testing', stage_type: 'testing', label: '测试验证' },
-    { name: 'docs', stage_type: 'docs', label: '文档产出' },
+    { name: 'requirements', stage_type: 'requirements', execution_profile: 'requirements', stage_semantics: 'analysis', label: '分析文本' },
+    { name: 'architecture', stage_type: 'architecture', execution_profile: 'architecture', stage_semantics: 'design', label: '方案设计' },
+    { name: 'assets', stage_type: 'assets', execution_profile: 'assets', stage_semantics: 'creation', label: '素材生成' },
+    { name: 'coding', stage_type: 'coding', execution_profile: 'coding', stage_semantics: 'creation', label: '内容实现' },
+    { name: 'testing', stage_type: 'testing', execution_profile: 'testing', stage_semantics: 'verification', label: '验证检查' },
+    { name: 'docs', stage_type: 'docs', execution_profile: 'docs', stage_semantics: 'delivery', label: '交付整理' },
   ];
 
   const STAGE_TYPE_ALIASES = {
@@ -16,6 +17,11 @@
     arch: 'architecture',
     design: 'architecture',
     solution: 'architecture',
+    assets: 'assets',
+    asset: 'assets',
+    visual: 'assets',
+    art: 'assets',
+    media: 'assets',
     coding: 'coding',
     code: 'coding',
     implementation: 'coding',
@@ -35,11 +41,21 @@
   };
 
   const STAGE_META = {
-    requirements: { label: '需求分析', icon: '📝' },
-    architecture: { label: '架构设计', icon: '🏗️' },
-    coding: { label: '编码实现', icon: '💻' },
-    testing: { label: '测试验证', icon: '🧪' },
-    docs: { label: '文档产出', icon: '📘' },
+    requirements: { label: '分析文本', icon: '📝' },
+    architecture: { label: '方案设计', icon: '🏗️' },
+    assets: { label: '素材生成', icon: '🖼️' },
+    coding: { label: '内容实现', icon: '💻' },
+    testing: { label: '验证检查', icon: '🧪' },
+    docs: { label: '交付整理', icon: '📘' },
+    analysis: { label: '分析', icon: '📝' },
+    planning: { label: '规划', icon: '🧭' },
+    design: { label: '设计', icon: '🏗️' },
+    creation: { label: '创作', icon: '✨' },
+    transformation: { label: '变换', icon: '🪄' },
+    verification: { label: '验证', icon: '🧪' },
+    delivery: { label: '交付', icon: '📦' },
+    decision: { label: '决策', icon: '🧠' },
+    coordination: { label: '协同', icon: '🤝' },
     created: { label: '任务创建', icon: '🟦' },
     'graph-run': { label: '流程收敛', icon: '✅' },
     'dev-loop': { label: '开发闭环', icon: '♻️' },
@@ -59,6 +75,7 @@
   const RUNTIME_THRESHOLDS = {
     requirements: { warn: 45, critical: 120 },
     architecture: { warn: 45, critical: 120 },
+    assets: { warn: 60, critical: 180 },
     coding: { warn: 90, critical: 240 },
     testing: { warn: 60, critical: 180 },
     docs: { warn: 45, critical: 120 },
@@ -135,6 +152,90 @@
     return `${secs}s`;
   }
 
+  function capabilityEffectsFromPayload(payload) {
+    return Array.isArray(payload?.capability_effects) ? payload.capability_effects : [];
+  }
+
+  function requestedInvocationsFromPayload(payload) {
+    return Array.isArray(payload?.requested_capability_invocations) ? payload.requested_capability_invocations : [];
+  }
+
+  function isCapabilityErrorStatus(status) {
+    return ['error', 'unsupported_format', 'missing_source', 'failed'].includes(String(status || '').toLowerCase());
+  }
+
+  function isCapabilityPendingStatus(status) {
+    return ['binding_ready', 'pending', 'placeholder_ready', 'requested'].includes(String(status || '').toLowerCase());
+  }
+
+  function summarizeStageCapabilityActivity(stage, events) {
+    const assigned = Array.isArray(stage?.capabilities) ? stage.capabilities.filter(Boolean) : [];
+    const stageEvents = (events || []).filter((event) => event?.payload?.stage === stage?.name);
+    const latestPayloadEvent = [...stageEvents].reverse().find((event) => {
+      const payload = event?.payload || {};
+      return capabilityEffectsFromPayload(payload).length || requestedInvocationsFromPayload(payload).length;
+    }) || null;
+    const payload = latestPayloadEvent?.payload || {};
+    const effects = capabilityEffectsFromPayload(payload);
+    const requested = requestedInvocationsFromPayload(payload);
+    if (!assigned.length && !effects.length && !requested.length) return null;
+
+    const hasError = effects.some((effect) => isCapabilityErrorStatus(effect?.status));
+    const hasPending = requested.length > 0 || effects.some((effect) => isCapabilityPendingStatus(effect?.status));
+    const effectCount = effects.length;
+    const requestCount = requested.length;
+    const status = hasError ? 'error' : (hasPending ? 'pending' : (effectCount ? 'done' : 'assigned'));
+    const text = ({
+      error: `能力异常 ${effectCount || requestCount || assigned.length}`,
+      pending: `能力处理中 ${Math.max(effectCount, requestCount, assigned.length)}`,
+      done: `能力已调用 ${effectCount}`,
+      assigned: `能力已分配 ${assigned.length}`,
+    })[status];
+    const hint = latestPayloadEvent?.payload?.error
+      || latestPayloadEvent?.payload?.feedback
+      || latestPayloadEvent?.payload?.reason
+      || '';
+
+    return {
+      stageName: String(stage?.name || ''),
+      assigned,
+      effects,
+      requested,
+      effectCount,
+      requestCount,
+      status,
+      text,
+      hint: String(hint || ''),
+    };
+  }
+
+  function mergeCapabilityActivities(items) {
+    const list = (items || []).filter(Boolean);
+    if (!list.length) return null;
+    const assignedCount = list.reduce((sum, item) => sum + Number(item.assigned?.length || 0), 0);
+    const effectCount = list.reduce((sum, item) => sum + Number(item.effectCount || 0), 0);
+    const requestCount = list.reduce((sum, item) => sum + Number(item.requestCount || 0), 0);
+    const status = list.some((item) => item.status === 'error')
+      ? 'error'
+      : list.some((item) => item.status === 'pending')
+        ? 'pending'
+        : list.some((item) => item.status === 'done')
+          ? 'done'
+          : 'assigned';
+    return {
+      status,
+      assignedCount,
+      effectCount,
+      requestCount,
+      text: ({
+        error: `能力异常 ${effectCount || requestCount || assignedCount}`,
+        pending: `能力处理中 ${Math.max(effectCount, requestCount, assignedCount)}`,
+        done: `能力已调用 ${effectCount}`,
+        assigned: `能力已分配 ${assignedCount}`,
+      })[status],
+    };
+  }
+
   function stageDisplayStatus(itemState) {
     if (itemState?.lastReviewPass === true) return '评审通过';
     if (itemState?.lastReviewPass === false) return '评审未过';
@@ -145,11 +246,14 @@
     const source = Array.isArray(stageDefinitions) && stageDefinitions.length ? stageDefinitions : DEFAULT_STAGES;
     return source.map((stage, index) => {
       const name = String(stage.name || stage.key || stage.id || `${normalizeStageType(stage.stage_type || 'requirements')}_${index + 1}`);
-      const stageType = normalizeStageType(stage.stage_type || name);
+      const executionProfile = normalizeStageType(stage.execution_profile || stage.stage_type || name);
+      const stageType = executionProfile;
       return {
         name,
         key: name,
         stage_type: stageType,
+        execution_profile: executionProfile,
+        stage_semantics: String(stage.stage_semantics || ''),
         label: String(stage.label || STAGE_META[stageType]?.label || name),
         role: String(stage.role || ''),
         capabilities: Array.isArray(stage.capabilities) ? stage.capabilities : [],
@@ -628,6 +732,7 @@
       }
       if (item.kind === 'dev-group') {
         const status = aggregateGroupStatus(item.group.stageKeys, stageState || {});
+        const groupCapability = mergeCapabilityActivities(item.group.stages.map((stage) => summarizeStageCapabilityActivity(stage, events)));
         const size = estimateNodeSize({ title: item.group.title, role: '', meta: `${item.group.stages.length} 个阶段`, submeta: [] });
         rawNodes.push({
           id: item.id,
@@ -643,6 +748,10 @@
           y: laneTopY,
           width: size.width,
           height: size.height,
+          capabilityBadge: groupCapability && groupCapability.assignedCount ? {
+            text: groupCapability.text,
+            status: groupCapability.status,
+          } : null,
           bubble: '',
         });
         cursorX += size.width + gapX;
@@ -652,15 +761,25 @@
       const stageCfg = (effectiveEventConfigs || {})[stage.name] || {};
       const itemState = (stageState || {})[stage.name] || {};
       const process = processMap[stage.name] || null;
+      const capabilityActivity = summarizeStageCapabilityActivity(stage, events);
       const modelText = compactNodeText(stageCfg.model || providerModelLabel?.(stageCfg.model_provider) || '未配置', '未配置');
       const roleText = primaryNodeText(stage.role || stageCfg.planned_role || '', '');
       const chips = [
         { text: `${itemState.attempts || 0}次执行`, tone: 'count' },
         { text: stageDisplayStatus(itemState), tone: 'status', status: itemState.status || 'pending' },
       ];
+      if (capabilityActivity) {
+        chips.push({
+          text: capabilityActivity.status === 'done'
+            ? `能力 ${capabilityActivity.effectCount}`
+            : (capabilityActivity.status === 'pending' ? '能力处理中' : (capabilityActivity.status === 'error' ? '能力异常' : `能力 ${capabilityActivity.assigned.length}`)),
+          tone: 'capability',
+          status: capabilityActivity.status,
+        });
+      }
       const phaseText = process?.label || itemState.runtimeAlert || itemState.progressMessage || '';
       const phaseTone = process?.tone || (itemState.runtimeLevel === 'critical' ? 'error' : (itemState.runtimeLevel === 'warning' ? 'warning' : 'active'));
-      const size = estimateNodeSize({ title: stage.label, role: roleText, meta: modelText, submeta: chips.slice(0, 2), phase: phaseText });
+      const size = estimateNodeSize({ title: stage.label, role: roleText, meta: modelText, submeta: chips, phase: phaseText });
       rawNodes.push({
         id: stage.name,
         stageType: stage.stage_type,
@@ -671,12 +790,19 @@
         meta: modelText,
         phase: phaseText,
         phaseTone,
-        submeta: chips.slice(0, 2),
+        submeta: chips,
         editable: true,
         x: cursorX,
         y: laneTopY,
         width: size.width,
         height: size.height,
+        capabilityBadge: capabilityActivity ? {
+          text: capabilityActivity.status === 'done'
+            ? `能力已调用 ${capabilityActivity.effectCount}`
+            : capabilityActivity.text,
+          status: capabilityActivity.status,
+          hint: capabilityActivity.hint,
+        } : null,
         bubble: '',
       });
       cursorX += size.width + gapX;
@@ -877,6 +1003,7 @@
     computeTaskInsights,
     summarizeFailure,
     computeNodePath,
+    summarizeStageCapabilityActivity,
     buildWorkflowViewModel,
     renderMiniMap,
   };

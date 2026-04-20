@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>任务中心 - MACS</title>
-  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
@@ -253,7 +253,7 @@
           <label for="spec">任务描述</label>
           <textarea id="spec" placeholder="例如：将前端布局拆分成主页、任务中心、任务详情和模型管理几个页面。"></textarea>
           <label for="caps">能力需求</label>
-          <input id="caps" value="code.edit:v1" />
+          <input id="caps" value="" placeholder="如 asset.generate:v1, doc.write:v1" />
           <div class="actions">
             <button type="button" onclick="createTask()">创建任务</button>
             <button type="button" class="secondary" onclick="document.getElementById('spec').value = ''">清空描述</button>
@@ -312,7 +312,7 @@
     </main>
   </div>
 
-  <script src="/app-shell.js?v=20260324a"></script>
+  <script src="/app-shell.js?v=20260326b"></script>
   <script src="/workflow_shared.js?v=20260324a"></script>
   <script>
     const DEFAULT_STAGES = window.MacsWorkflow.DEFAULT_STAGES;

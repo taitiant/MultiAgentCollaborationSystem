@@ -19,17 +19,29 @@ from core import (
     new_event,
 )
 from adapters.model_registry import ModelRegistry
+from orchestration.capability_registry import get_default_capability_catalog, merge_capability_settings
 from orchestration.graph_builder import (
     GraphBuilder,
     init_task_workspace,
+)
+from orchestration.collaboration import CollaborationHub, build_blackboard_snapshot
+from orchestration.mcp_registry import merge_mcp_settings
+from orchestration.stage_catalog import (
     DEFAULT_STAGE_PROMPTS,
     STAGE_TYPE_BLUEPRINTS,
+    build_stage_type_blueprints,
+    normalize_execution_profile,
+    normalize_stage_semantics,
     normalize_stage_type,
     render_stage_prompt,
+    resolve_stage_execution_profile,
+    resolve_stage_semantics,
+)
+from orchestration.skill_registry import get_default_skill_catalog, merge_skill_settings
+from orchestration.workflow_plan import (
     resolve_conversation_groups,
     write_leader_plan_snapshot,
 )
-from orchestration.collaboration import CollaborationHub, build_blackboard_snapshot
 from orchestration.workspace_cleanup import cleanup_architecture_orphan_files
 from storage.file_store import FileStore
 from plugins.logging_plugin import LoggingPlugin
@@ -38,6 +50,8 @@ import db
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CAPA_CONFIG_PATH = os.path.join(BASE_DIR, "config", "capabilities.json")
+MCP_CONFIG_PATH = os.path.join(BASE_DIR, "config", "mcp_servers.json")
+SKILL_CONFIG_PATH = os.path.join(BASE_DIR, "config", "skills.json")
 WORKSPACE_ROOT = os.path.join(BASE_DIR, "workspace")
 WF_TPL = os.path.join(BASE_DIR, "config", "workflow_templates", "software_dev.json")
 
@@ -47,7 +61,15 @@ with open(WF_TPL) as f:
     WORKFLOW_TEMPLATE = json.load(f)
 WORKFLOW_STAGES = [st.get("name") for st in WORKFLOW_TEMPLATE.get("stages", [])]
 WORKFLOW_STAGE_MAP = {st.get("name"): st for st in WORKFLOW_TEMPLATE.get("stages", [])}
+EXECUTION_PROFILE_KEYS = list(STAGE_TYPE_BLUEPRINTS.keys())
+BINDABLE_STAGE_TYPES = EXECUTION_PROFILE_KEYS
 STAGE_RUNTIME_DEFAULTS: Dict[str, Dict[str, Any]] = {
+    "assets": {
+        "asset_mode": "svg_placeholder",
+        "max_asset_count": 6,
+        "image_model_provider": "",
+        "review_blocking": True,
+    },
     "coding": {
         "auto_rework_limit": 2,
         "auto_smoke_fix_limit": 3,
@@ -62,20 +84,37 @@ STAGE_RUNTIME_DEFAULTS: Dict[str, Dict[str, Any]] = {
     },
     "docs": {
         "auto_rework_limit": 2,
+        "doc_output_formats": ["md"],
     },
 }
 
 storage = FileStore(base_path=WORKSPACE_ROOT)
 model_registry = ModelRegistry()
-graph_builder = GraphBuilder(WORKSPACE_ROOT, model_registry)
 db.init_db()
 logging_plugin = LoggingPlugin()
 metrics_plugin = MetricsPlugin()
 if os.path.exists(CAPA_CONFIG_PATH):
     with open(CAPA_CONFIG_PATH, "r") as f:
-        CAPA_CONFIG = json.load(f)
+        CAPA_CONFIG = merge_capability_settings(json.load(f))
 else:
-    CAPA_CONFIG = {"vector_model": "", "rerank_model": "", "notes": ""}  # default
+    CAPA_CONFIG = merge_capability_settings()
+if os.path.exists(MCP_CONFIG_PATH):
+    with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
+        MCP_CONFIG = merge_mcp_settings(json.load(f))
+else:
+    MCP_CONFIG = merge_mcp_settings()
+if os.path.exists(SKILL_CONFIG_PATH):
+    with open(SKILL_CONFIG_PATH, "r") as f:
+        SKILL_CONFIG = merge_skill_settings(json.load(f))
+else:
+    SKILL_CONFIG = merge_skill_settings()
+graph_builder = GraphBuilder(
+    WORKSPACE_ROOT,
+    model_registry,
+    capability_settings_provider=lambda: CAPA_CONFIG,
+    skill_settings_provider=lambda: SKILL_CONFIG,
+    mcp_settings_provider=lambda: MCP_CONFIG,
+)
 
 # ---- runtime state ----
 state = SystemState(tasks={}, task_status={}, history=[])
@@ -173,23 +212,25 @@ def _latest_stage_artifacts(task_id: str, stage_name: str) -> List[Dict[str, Any
 
 
 def _stage_cleanup_roots(stage_type: str) -> set[str]:
-    normalized = normalize_stage_type(stage_type)
+    normalized = normalize_execution_profile(stage_type)
     if normalized == "requirements":
         return {"analysis"}
     if normalized == "architecture":
         return {"design"}
+    if normalized == "assets":
+        return {"assets", "design"}
     if normalized == "docs":
         return {"docs"}
     if normalized == "testing":
         return {"tests"}
     if normalized == "coding":
-        return {"code", "app", "src", "public", "assets", "scripts", "styles", "tests"}
+        return {"code", "app", "src", "public", "scripts", "styles", "tests"}
     return set()
 
 
 def _cleanup_stage_artifacts_by_scope(task: Task, workspace: str, stage_name: str, stage_def: Optional[Dict[str, Any]] = None) -> int:
     workspace = os.path.abspath(task.workspace_path or os.path.join(WORKSPACE_ROOT, task.task_id))
-    stage_type = normalize_stage_type((stage_def or {}).get("stage_type") or stage_name)
+    stage_type = resolve_stage_execution_profile(stage_def or {"stage_type": stage_name, "name": stage_name})
     owned_roots = _stage_cleanup_roots(stage_type)
     try:
         target = db.get_latest_stage_done_event(task.task_id, stage_name)
@@ -310,7 +351,7 @@ def get_default_provider_id(stage_name: str | None = None, stage_type: str | Non
     candidates: List[str] = []
     if stage_name:
         candidates.append(stage_name)
-    normalized_type = normalize_stage_type(stage_type or stage_name)
+    normalized_type = normalize_execution_profile(stage_type or stage_name, fallback="")
     if normalized_type and normalized_type not in candidates:
         candidates.append(normalized_type)
     for candidate in candidates:
@@ -389,14 +430,26 @@ def _sse_frame(data: Dict[str, Any], *, event: str = "update") -> str:
 
 def normalize_stage_definition(stage_def: Dict[str, Any]) -> Dict[str, Any]:
     raw_name = str(stage_def.get("name") or stage_def.get("id") or stage_def.get("label") or "").strip()
-    stage_type = normalize_stage_type(stage_def.get("stage_type") or raw_name)
-    reference = dict(WORKFLOW_STAGE_MAP.get(stage_type) or {})
-    blueprint = dict(STAGE_TYPE_BLUEPRINTS.get(stage_type) or {})
+    execution_profile = resolve_stage_execution_profile(
+        {
+            "execution_profile": stage_def.get("execution_profile"),
+            "stage_type": stage_def.get("stage_type") or raw_name,
+            "stage_semantics": stage_def.get("stage_semantics") or stage_def.get("semantic_type"),
+            "label": stage_def.get("label"),
+            "name": raw_name,
+        }
+    )
+    reference = dict(WORKFLOW_STAGE_MAP.get(execution_profile) or {})
+    blueprint = dict(build_stage_type_blueprints(CAPA_CONFIG, SKILL_CONFIG).get(execution_profile) or STAGE_TYPE_BLUEPRINTS.get(execution_profile) or {})
+    stage_semantics = resolve_stage_semantics(stage_def, execution_profile=execution_profile)
     normalized = {
-        "name": raw_name or stage_type,
-        "stage_type": stage_type,
-        "label": stage_def.get("label") or blueprint.get("label") or reference.get("label") or raw_name or stage_type,
+        "name": raw_name or execution_profile,
+        "stage_type": execution_profile,
+        "execution_profile": execution_profile,
+        "stage_semantics": stage_semantics,
+        "label": stage_def.get("label") or blueprint.get("label") or reference.get("label") or raw_name or execution_profile,
         "role": stage_def.get("role") or blueprint.get("role") or "",
+        "skills": stage_def.get("skills") or reference.get("skills") or blueprint.get("skills") or [],
         "capabilities": stage_def.get("capabilities") or reference.get("capabilities") or blueprint.get("capabilities") or [],
         "human_checkpoint": bool(stage_def.get("human_checkpoint", reference.get("human_checkpoint", blueprint.get("human_checkpoint", False)))),
         "depends_on": [str(dep) for dep in stage_def.get("depends_on", []) if dep] if isinstance(stage_def.get("depends_on"), list) else [],
@@ -424,9 +477,14 @@ def task_stage_definitions(task: Optional[Task] = None) -> List[Dict[str, Any]]:
     event_configs = context.get("event_configs") or {}
     if isinstance(raw_plan, list) and raw_plan:
         for stage_name, cfg in event_configs.items():
-            if stage_name in known_names or stage_name in WORKFLOW_STAGES or stage_name == "planning":
+            if stage_name in known_names or stage_name in EXECUTION_PROFILE_KEYS or stage_name == "planning":
                 continue
-            stage_defs.append(normalize_stage_definition({"name": stage_name, "stage_type": (cfg or {}).get("stage_type") or stage_name}))
+            stage_defs.append(normalize_stage_definition({
+                "name": stage_name,
+                "execution_profile": (cfg or {}).get("execution_profile"),
+                "stage_type": (cfg or {}).get("stage_type") or stage_name,
+                "stage_semantics": (cfg or {}).get("stage_semantics"),
+            }))
     return stage_defs
 
 
@@ -557,14 +615,14 @@ def resolve_task_stage_name(task: Task, stage_name: str) -> str:
     stage_map = task_stage_map(task)
     if stage_name in stage_map:
         return stage_name
-    normalized = normalize_stage_type(stage_name)
-    matches = [stage["name"] for stage in task_stage_definitions(task) if stage.get("stage_type") == normalized]
+    normalized = normalize_execution_profile(stage_name, fallback="")
+    matches = [stage["name"] for stage in task_stage_definitions(task) if stage.get("execution_profile") == normalized or stage.get("stage_type") == normalized]
     return matches[0] if matches else stage_name
 
 
 
 def get_stage_runtime_defaults(stage_name: str, stage_type: str | None = None) -> Dict[str, Any]:
-    normalized = normalize_stage_type(stage_type or stage_name)
+    normalized = normalize_execution_profile(stage_type or stage_name)
     return dict(STAGE_RUNTIME_DEFAULTS.get(normalized, {}))
 
 
@@ -589,19 +647,38 @@ def ensure_task_defaults(task: Task) -> bool:
 
     stage_defs = task_stage_definitions(task)
     stage_map = {stage["name"]: stage for stage in stage_defs}
-    all_stage_keys = set(WORKFLOW_STAGES)
+    all_stage_keys = set(EXECUTION_PROFILE_KEYS)
     all_stage_keys.update(stage_map.keys())
     all_stage_keys.update(key for key in event_configs.keys() if key != "planning")
 
     for stage in all_stage_keys:
         raw_cfg = event_configs.get(stage) or {}
-        stage_type = normalize_stage_type(raw_cfg.get("stage_type") or stage_map.get(stage, {}).get("stage_type") or stage)
+        stage_type = resolve_stage_execution_profile({
+            "execution_profile": raw_cfg.get("execution_profile") or stage_map.get(stage, {}).get("execution_profile"),
+            "stage_type": raw_cfg.get("stage_type") or stage_map.get(stage, {}).get("stage_type") or stage,
+            "stage_semantics": raw_cfg.get("stage_semantics") or stage_map.get(stage, {}).get("stage_semantics"),
+            "name": stage,
+        })
         stage_cfg = dict(raw_cfg)
         if stage_cfg.get("model_provider") and not provider_exists(stage_cfg.get("model_provider")):
             stage_cfg.pop("model_provider", None)
             changed = True
         if stage_cfg.get("stage_type") != stage_type:
             stage_cfg["stage_type"] = stage_type
+            changed = True
+        if stage_cfg.get("execution_profile") != stage_type:
+            stage_cfg["execution_profile"] = stage_type
+            changed = True
+        semantics = resolve_stage_semantics(
+            {
+                "stage_semantics": stage_cfg.get("stage_semantics") or stage_map.get(stage, {}).get("stage_semantics"),
+                "label": stage_map.get(stage, {}).get("label") or stage,
+                "stage_type": stage_type,
+            },
+            execution_profile=stage_type,
+        )
+        if stage_cfg.get("stage_semantics") != semantics:
+            stage_cfg["stage_semantics"] = semantics
             changed = True
         defaults = get_stage_runtime_defaults(stage, stage_type)
         for key, value in defaults.items():
@@ -626,12 +703,14 @@ def merged_event_configs(task: Task) -> Dict[str, Dict[str, Any]]:
     effective: Dict[str, Dict[str, Any]] = {}
     for stage in task_stage_definitions(task):
         stage_name = stage.get("name") or ""
-        stage_type = normalize_stage_type(stage.get("stage_type") or stage_name)
+        stage_type = resolve_stage_execution_profile(stage)
         cfg = get_stage_runtime_defaults(stage_name, stage_type)
         if stage_type != stage_name:
             cfg.update(raw.get(stage_type, {}))
         cfg.update(raw.get(stage_name, {}))
         cfg["stage_type"] = stage_type
+        cfg["execution_profile"] = stage_type
+        cfg["stage_semantics"] = resolve_stage_semantics(stage, execution_profile=stage_type)
         if not cfg.get("model_provider"):
             cfg["model_provider"] = get_default_provider_id(stage_name=stage_name, stage_type=stage_type) or task_default
         effective[stage_name] = cfg
@@ -646,16 +725,20 @@ def stage_details(task: Task) -> Dict[str, Dict[str, Any]]:
     details: Dict[str, Dict[str, Any]] = {}
     for stage in task_stage_definitions(task):
         stage_name = stage.get("name") or ""
-        stage_type = normalize_stage_type(stage.get("stage_type") or stage_name)
+        stage_type = resolve_stage_execution_profile(stage)
+        stage_semantics = resolve_stage_semantics(stage, execution_profile=stage_type)
         cfg = effective_cfg.get(stage_name, {})
         prompt_override = cfg.get("prompt_template")
         prompt_key = stage_type if stage_type in DEFAULT_STAGE_PROMPTS else stage_name
         default_prompt = DEFAULT_STAGE_PROMPTS.get(prompt_key, "")
-        effective_prompt = render_stage_prompt(stage_name, spec, prompt_override if isinstance(prompt_override, str) else None, stage_type=stage_type)
+        effective_prompt = render_stage_prompt(stage_name, spec, prompt_override if isinstance(prompt_override, str) else None, stage_type=stage_type, execution_profile=stage_type)
         details[stage_name] = {
             "label": stage.get("label", stage_name),
             "stage_type": stage_type,
+            "execution_profile": stage_type,
+            "stage_semantics": stage_semantics,
             "role": stage.get("role") or cfg.get("planned_role") or "",
+            "skills": stage.get("skills", []),
             "capabilities": stage.get("capabilities", []),
             "depends_on": stage.get("depends_on", []),
             "human_checkpoint": bool(stage.get("human_checkpoint", False)),
@@ -775,7 +858,7 @@ def ensure_task(task_id: str) -> Task:
             restored = Task(
                 task_id=row["task_id"],
                 domain=row.get("domain", "software"),
-                required_capabilities=row.get("required_capabilities") or ["code.edit:v1"],
+                required_capabilities=row.get("required_capabilities") or [],
                 context=row.get("context") or {},
                 priority=int(row.get("priority") or 50),
                 workspace_path=row.get("workspace_path"),
@@ -890,7 +973,7 @@ def run_single_stage(task: Task, stage_name: str):
     resolved_stage = resolve_task_stage_name(task, stage_name)
     stage_map = task_stage_map(task)
     if resolved_stage not in stage_map:
-        if stage_name in WORKFLOW_STAGES:
+        if stage_name in EXECUTION_PROFILE_KEYS:
             stage_def = normalize_stage_definition(WORKFLOW_STAGE_MAP.get(stage_name) or {"name": stage_name, "stage_type": stage_name})
             resolved_stage = stage_def["name"]
         else:
@@ -910,6 +993,8 @@ def run_single_stage(task: Task, stage_name: str):
     req_evt = new_event("user", task.task_id, "StageRerunRequested", {
         "stage": resolved_stage,
         "stage_type": stage_def.get("stage_type"),
+        "execution_profile": stage_def.get("execution_profile") or stage_def.get("stage_type"),
+        "stage_semantics": stage_def.get("stage_semantics"),
         "label": stage_def.get("label", resolved_stage),
         "cleanup_enabled": cleanup_enabled,
         "cleaned_artifacts": removed_count,
@@ -1037,7 +1122,7 @@ def list_tasks():
 def create_task(body: Dict):
     require_registered_llm_model()
     task_id = body.get("task_id") or str(uuid.uuid4())
-    required_caps = body.get("required_capabilities") or ["code.edit:v1"]
+    required_caps = body.get("required_capabilities") or []
     context = body.get("context") or {}
     context.setdefault("default_model_provider", get_default_provider_id())
     context.setdefault("event_configs", {})
@@ -1145,7 +1230,9 @@ def get_task_event_configs(task_id: str):
         "stages": [stage.get("name") for stage in stage_defs],
         "stage_definitions": stage_defs,
         "conversation_groups": conversation_groups,
-        "reference_stage_types": WORKFLOW_STAGES,
+        "reference_stage_types": EXECUTION_PROFILE_KEYS,
+        "reference_execution_profiles": EXECUTION_PROFILE_KEYS,
+        "reference_stage_semantics": sorted({"analysis", "planning", "design", "creation", "transformation", "verification", "delivery", "decision", "coordination"}),
         "default_model_provider": task.context.get("default_model_provider") or get_default_provider_id(),
         "event_configs": event_configs,
         "effective_event_configs": effective,
@@ -1198,7 +1285,16 @@ def submit_human_decision(task_id: str, body: Dict[str, Any]):
     stage_name = str(pending.get("stage") or "")
     stage_map = task_stage_map(task)
     stage_def = stage_map.get(stage_name, {})
-    stage_type = normalize_stage_type((stage_def or {}).get("stage_type") or pending.get("stage_type") or stage_name)
+    stage_type = resolve_stage_execution_profile(
+        {
+            "execution_profile": (stage_def or {}).get("execution_profile") or pending.get("execution_profile"),
+            "stage_type": (stage_def or {}).get("stage_type") or pending.get("stage_type") or stage_name,
+            "stage_semantics": (stage_def or {}).get("stage_semantics") or pending.get("stage_semantics"),
+            "label": (stage_def or {}).get("label") or pending.get("label"),
+            "name": stage_name,
+        }
+    )
+    stage_semantics = resolve_stage_semantics(stage_def or pending, execution_profile=stage_type)
     stage_label = str((stage_def or {}).get("label") or pending.get("label") or stage_name or "当前阶段")
     decision_lines = []
     if selected_option:
@@ -1275,6 +1371,8 @@ def submit_human_decision(task_id: str, body: Dict[str, Any]):
     evt = new_event("user", task.task_id, "HumanDecisionSubmitted", {
         "stage": stage_name,
         "stage_type": stage_type,
+        "execution_profile": stage_type,
+        "stage_semantics": stage_semantics,
         "label": stage_label,
         "question": pending.get("question"),
         "selected_option": selected_option,
@@ -1304,7 +1402,7 @@ def get_task_blackboard(task_id: str, stage_name: Optional[str] = None, limit: i
 def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]):
     require_registered_llm_model()
     task = ensure_task(task_id)
-    allowed_names = set(task_stage_sequence(task)) | set(WORKFLOW_STAGES)
+    allowed_names = set(task_stage_sequence(task)) | set(EXECUTION_PROFILE_KEYS)
     target_name = resolve_task_stage_name(task, event_name)
     if target_name not in allowed_names and event_name not in allowed_names:
         raise HTTPException(status_code=400, detail="unsupported event/stage")
@@ -1316,7 +1414,16 @@ def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]
         raise HTTPException(status_code=400, detail="provider not found")
 
     stage_def = task_stage_map(task).get(target_name)
-    stage_type = normalize_stage_type((stage_def or {}).get("stage_type") or (task.context.get("event_configs") or {}).get(target_name, {}).get("stage_type") or target_name)
+    stage_type = resolve_stage_execution_profile(
+        {
+            "execution_profile": (stage_def or {}).get("execution_profile") or (task.context.get("event_configs") or {}).get(target_name, {}).get("execution_profile"),
+            "stage_type": (stage_def or {}).get("stage_type") or (task.context.get("event_configs") or {}).get(target_name, {}).get("stage_type") or target_name,
+            "stage_semantics": (stage_def or {}).get("stage_semantics") or (task.context.get("event_configs") or {}).get(target_name, {}).get("stage_semantics"),
+            "label": (stage_def or {}).get("label") or target_name,
+            "name": target_name,
+        }
+    )
+    stage_semantics = resolve_stage_semantics(stage_def or {"name": target_name, "stage_type": stage_type}, execution_profile=stage_type)
     event_configs = task.context.setdefault("event_configs", {})
     prev_cfg = event_configs.get(target_name, {})
     next_cfg = dict(prev_cfg)
@@ -1331,6 +1438,8 @@ def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]
             next_cfg[key] = body.get(key)
 
     next_cfg["stage_type"] = stage_type
+    next_cfg["execution_profile"] = stage_type
+    next_cfg["stage_semantics"] = stage_semantics
     compact_cfg = {k: v for k, v in next_cfg.items() if v not in ("", None)}
     event_configs[target_name] = compact_cfg
     task.context["event_configs"] = event_configs
@@ -1338,12 +1447,12 @@ def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]
     ensure_task_defaults(task)
     db.update_task_context(task.task_id, task.context)
 
-    evt = new_event("user", task_id, "TaskEventConfigUpdated", {"event": target_name, "stage_type": stage_type, "config": compact_cfg})
+    evt = new_event("user", task_id, "TaskEventConfigUpdated", {"event": target_name, "stage_type": stage_type, "execution_profile": stage_type, "stage_semantics": stage_semantics, "config": compact_cfg})
     state.history.append(evt)
     db.log_event(evt.event_id, task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
     logging_plugin.on_event(evt, state)
     metrics_plugin.on_event(evt, state)
-    return {"status": "ok", "event": target_name, "stage_type": stage_type, "config": compact_cfg}
+    return {"status": "ok", "event": target_name, "stage_type": stage_type, "execution_profile": stage_type, "stage_semantics": stage_semantics, "config": compact_cfg}
 
 
 @app.get("/events")
@@ -1425,7 +1534,9 @@ def ai_registry_overview():
         "credentials": db.list_ai_credentials(),
         "models": db.list_ai_models(),
         "stage_bindings": db.get_stage_bindings(),
-        "stages": WORKFLOW_STAGES,
+        "stages": EXECUTION_PROFILE_KEYS,
+        "execution_profiles": EXECUTION_PROFILE_KEYS,
+        "stage_semantics": sorted({"analysis", "planning", "design", "creation", "transformation", "verification", "delivery", "decision", "coordination"}),
         "provider_types": ["openai-compatible", "openai", "codex", "gemini"],
     }
 
@@ -1556,37 +1667,83 @@ def test_ai_model(model_id: str, body: Optional[Dict[str, Any]] = None):
 
 @app.get("/ai-registry/stage-bindings")
 def get_ai_stage_bindings():
-    return {"bindings": db.get_stage_bindings(), "stages": WORKFLOW_STAGES}
+    return {"bindings": db.get_stage_bindings(), "stages": EXECUTION_PROFILE_KEYS, "execution_profiles": EXECUTION_PROFILE_KEYS}
 
 
 @app.put("/ai-registry/stage-bindings")
 def update_ai_stage_bindings(body: Dict[str, Any]):
     bindings = body.get("bindings") if isinstance(body.get("bindings"), dict) else {}
-    for stage in WORKFLOW_STAGES:
+    for stage in EXECUTION_PROFILE_KEYS:
         if stage in bindings:
             model_id = bindings.get(stage) or None
             if model_id and not db.get_ai_model(model_id):
                 raise HTTPException(status_code=400, detail=f"model not found for stage {stage}")
             db.set_stage_binding(stage, model_id)
-    return {"bindings": db.get_stage_bindings(), "stages": WORKFLOW_STAGES}
+    return {"bindings": db.get_stage_bindings(), "stages": EXECUTION_PROFILE_KEYS, "execution_profiles": EXECUTION_PROFILE_KEYS}
 
 
 @app.get("/capabilities")
 def get_capabilities():
-    return CAPA_CONFIG
+    return {**CAPA_CONFIG, "default_catalog": get_default_capability_catalog()}
 
 
 @app.post("/capabilities")
 def set_capabilities(body: Dict):
-    CAPA_CONFIG.update({
+    next_state = dict(CAPA_CONFIG)
+    next_state.update({
         "vector_model": body.get("vector_model", CAPA_CONFIG.get("vector_model", "")),
         "rerank_model": body.get("rerank_model", CAPA_CONFIG.get("rerank_model", "")),
         "notes": body.get("notes", CAPA_CONFIG.get("notes", "")),
     })
+    if isinstance(body.get("catalog"), list):
+        next_state["catalog"] = body.get("catalog")
+    if isinstance(body.get("bindings"), list):
+        next_state["bindings"] = body.get("bindings")
+    merged = merge_capability_settings(next_state)
+    CAPA_CONFIG.clear()
+    CAPA_CONFIG.update(merged)
     os.makedirs(os.path.dirname(CAPA_CONFIG_PATH), exist_ok=True)
-    with open(CAPA_CONFIG_PATH, "w") as f:
+    with open(CAPA_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(CAPA_CONFIG, f, ensure_ascii=False, indent=2)
-    return {"status": "ok", **CAPA_CONFIG}
+    return {"status": "ok", **CAPA_CONFIG, "default_catalog": get_default_capability_catalog()}
+
+
+@app.get("/mcp-servers")
+def get_mcp_servers():
+    return MCP_CONFIG
+
+
+@app.post("/mcp-servers")
+def set_mcp_servers(body: Dict[str, Any]):
+    merged = merge_mcp_settings(body)
+    MCP_CONFIG.clear()
+    MCP_CONFIG.update(merged)
+    os.makedirs(os.path.dirname(MCP_CONFIG_PATH), exist_ok=True)
+    with open(MCP_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(MCP_CONFIG, f, ensure_ascii=False, indent=2)
+    return {"status": "ok", **MCP_CONFIG}
+
+
+@app.get("/skills")
+def get_skills():
+    return {**SKILL_CONFIG, "default_catalog": get_default_skill_catalog()}
+
+
+@app.post("/skills")
+def set_skills(body: Dict):
+    next_state = dict(SKILL_CONFIG)
+    next_state.update({
+        "notes": body.get("notes", SKILL_CONFIG.get("notes", "")),
+    })
+    if isinstance(body.get("catalog"), list):
+        next_state["catalog"] = body.get("catalog")
+    merged = merge_skill_settings(next_state)
+    SKILL_CONFIG.clear()
+    SKILL_CONFIG.update(merged)
+    os.makedirs(os.path.dirname(SKILL_CONFIG_PATH), exist_ok=True)
+    with open(SKILL_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(SKILL_CONFIG, f, ensure_ascii=False, indent=2)
+    return {"status": "ok", **SKILL_CONFIG, "default_catalog": get_default_skill_catalog()}
 
 # ---- static frontend ----
 static_dir = os.path.join(BASE_DIR, "frontend")

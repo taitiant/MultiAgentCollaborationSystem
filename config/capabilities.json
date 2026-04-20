@@ -1,5 +1,177 @@
 {
   "vector_model": "",
   "rerank_model": "",
-  "notes": "在能力管理页设置知识库向量模型、重排序模型等。"
+  "notes": "这里只配置真正需要工具、插件、模块或外部接口参与执行的能力。",
+  "bindings": [],
+  "catalog": [
+    {
+      "id": "asset.generate:v1",
+      "label": "素材生成",
+      "category": "assets",
+      "description": "通过模型、HTTP API、工作流或内部工具生成素材文件。",
+      "recommended_stage_types": [
+        "assets"
+      ],
+      "default_stage_assignment": false,
+      "planner_visible": true,
+      "handler": "asset.generate:v1",
+      "invocation_hint": "输入素材清单、提示词和输出格式，返回素材文件、URL 或外部执行请求。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "assets": {
+            "type": "array"
+          },
+          "asset_mode": {
+            "type": "string"
+          },
+          "output_formats": {
+            "type": "array"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "assets": {
+            "type": "array"
+          },
+          "request_manifest": {
+            "type": "object"
+          }
+        }
+      },
+      "supported_binding_types": [
+        "direct_model",
+        "http_api",
+        "workflow_api",
+        "internal_tool",
+        "mcp_server"
+      ],
+      "required_model_kind": "image",
+      "runtime_defaults": {
+        "asset_mode": "svg_placeholder",
+        "output_formats": [
+          "svg"
+        ]
+      },
+      "produces_artifact_types": [
+        "asset",
+        "asset_prompt",
+        "json"
+      ]
+    },
+    {
+      "id": "doc.read:v1",
+      "label": "文档读取",
+      "category": "documents",
+      "description": "读取 doc/docx 文档正文并转成可继续处理的文本产物；内置优先支持 docx。",
+      "recommended_stage_types": [
+        "requirements",
+        "architecture",
+        "docs"
+      ],
+      "default_stage_assignment": false,
+      "planner_visible": true,
+      "handler": "doc.read:v1",
+      "invocation_hint": "输入 doc/docx 文件路径，输出抽取后的正文文本；doc 默认建议走外部适配器。",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "source_path"
+        ],
+        "properties": {
+          "source_path": {
+            "type": "string"
+          },
+          "extract_mode": {
+            "type": "string"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "output_path": {
+            "type": "string"
+          }
+        }
+      },
+      "supported_binding_types": [
+        "http_api",
+        "workflow_api",
+        "internal_tool",
+        "mcp_server"
+      ],
+      "runtime_defaults": {
+        "source_path": ""
+      },
+      "produces_artifact_types": [
+        "txt",
+        "json"
+      ]
+    },
+    {
+      "id": "doc.write:v1",
+      "label": "文档写入",
+      "category": "documents",
+      "description": "把结构化文本写成 doc/docx 文档；内置优先支持 docx，doc 可通过 HTTP API / 工作流 / 工具绑定执行。",
+      "recommended_stage_types": [
+        "docs"
+      ],
+      "default_stage_assignment": false,
+      "planner_visible": true,
+      "handler": "doc.write:v1",
+      "invocation_hint": "输入正文内容、目标文件名和输出格式，返回 docx 产物或外部写入请求。",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "target_filename": {
+            "type": "string"
+          },
+          "output_formats": {
+            "type": "array"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array"
+          },
+          "request_manifest": {
+            "type": "object"
+          }
+        }
+      },
+      "supported_binding_types": [
+        "http_api",
+        "workflow_api",
+        "internal_tool",
+        "mcp_server"
+      ],
+      "runtime_defaults": {
+        "output_formats": [
+          "docx"
+        ],
+        "target_filename": "documents/output.docx"
+      },
+      "produces_artifact_types": [
+        "docx",
+        "doc",
+        "txt",
+        "json"
+      ]
+    }
+  ]
 }

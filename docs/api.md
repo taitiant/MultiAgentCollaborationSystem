@@ -10,7 +10,7 @@
   "id": "patcher",
   "role_name": "PatchAgent",
   "domain": "software",
-  "capabilities": ["code.edit:v1", "code.diff:v1"],
+  "capabilities": ["asset.generate:v1", "doc.write:v1"],
   "model_adapter": "gpt4o",
   "tools": ["shell", "git"],
   "metadata": {"owner": "team-a"}
@@ -21,12 +21,17 @@
 - 采用命名空间 + 语义名 + 版本：`<namespace>.<action>:v<major>`，如 `code.generate:v1`。
 - 集中注册，启动时校验冲突与弃用提示。
 
+### 2.2.1 Skill 命名规范
+- 同样采用命名空间 + 语义名 + 版本：`<namespace>.<strategy>:v<major>`，如 `coding.incremental_delivery:v1`。
+- Skill 用于增强智能体的方法论、约束和 capability 调用策略，不直接代表执行权限。
+- Agent 可以直接调用 capability，不要求必须经由 skill。
+
 ### 2.3 Task
 ```
 {
   "task_id": "task-001",
   "domain": "software",
-  "required_capabilities": ["code.edit:v1", "test.run:v1"],
+  "required_capabilities": ["asset.generate:v1", "doc.write:v1"],
   "context": {"repo": "git://...", "spec": "Implement login"},
   "priority": 80,
   "workspace_path": "workspace/task-001"   // 可选，未填则自动创建
@@ -41,7 +46,7 @@
   "actor_id": "patcher",
   "domain": "software",
   "intent": "apply_patch",
-  "capabilities_used": ["code.edit:v1"],
+  "capabilities_used": ["doc.write:v1"],
   "artifacts": [
     {"type": "diff", "uri": "workspace/task-001/diff.patch", "hash": "sha256:...", "mime": "text/x-diff"}
   ],
@@ -97,6 +102,10 @@
 - step() -> {status, actions?: [AgentMessage]}   // 驱动一次调度与执行
 - get_state(task_id?: str) -> {state, updated_at}
 - get_event_log(task_id?: str, offset?: int, limit?: int) -> [Event]
+- get_capabilities() -> {catalog, bindings, ...}
+- set_capabilities(body) -> {status, catalog, bindings, ...}
+- get_skills() -> {catalog, notes}
+- set_skills(body) -> {status, catalog, notes}
 
 ## 4. 调度器契约
 - 输入：Task + SystemState（含队列、Agent 列表、历史记录）。

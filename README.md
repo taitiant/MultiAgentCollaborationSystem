@@ -18,12 +18,12 @@ MACS 当前聚焦于“软件开发任务编排”：
 
 ## 当前能力
 
-- 多阶段任务执行：需求、架构、编码、测试、文档
+- 动态阶段实例执行：由 Leader 现场设计真实阶段，系统内部只保留轻量执行轮廓
 - 阶段级评审与返工：支持评审失败后回到上一阶段继续修正
 - 编码闭环优化：编码阶段可做基础冒烟校验，测试阶段可执行更完整验证
 - 对话与协作记录：保留阶段对话、共享黑板、决策记忆
 - 人工决策入口：当系统判断需要人工介入时，可在任务中补充意见
-- AI 注册中心：支持凭据、模型、阶段绑定、模型测试
+- AI 注册中心：支持凭据、模型、执行轮廓绑定、模型测试
 - 多模型适配：支持 `openai-compatible`、`openai`、`codex`、`gemini`
 - 任务可续跑：失败、返工、中断后可以继续推进
 - 工作区隔离：每个任务有独立目录，保存设计、代码、测试和文档产物
@@ -37,20 +37,57 @@ MACS 当前聚焦于“软件开发任务编排”：
 - `/tasks.html`：任务列表
 - `/task.html?task_id=...`：任务详情、工作流画布、日志、对话、黑板
 - `/capabilities.html`：能力配置页
+- `/skills.html`：技能策略页
+
+## Skill / Capability 架构
+
+MACS 现在采用分层增强机制：
+
+- `Agent`：承担角色、记忆、对话与阶段目标
+- `Skill`：增强智能体的方法论、约束和调用策略
+- `Capability`：提供统一的可执行能力契约
+- `Executor`：真正落到脚本、模型、HTTP API 或工作流
+
+也就是：
+
+```text
+Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
+```
+
+注意：
+
+- `Skill` 不等于 `Capability`
+- 智能体**可以直接调用 capability**
+- 不要求“必须先通过 skill 才能调用 capability”
+- `Skill` 负责“如何更聪明地做”
+- `Capability` 负责“系统允许并且能够怎么做”
+
+当前相关文件：
+
+- `config/skills.json`
+- `orchestration/skill_registry.py`
+- `config/capabilities.json`
+- `orchestration/capability_registry.py`
+- `docs/skill_capability_architecture.md`
 
 ## 核心流程
 
 一个典型任务会经历以下流程：
 
 1. 创建任务
-2. 生成任务计划与阶段定义
-3. 阶段执行
+2. 生成任务计划与阶段实例
+3. 按阶段实例执行
 4. 评审
 5. 失败返工 / 人工决策 / 继续推进
 6. 产物落盘
 7. 最终完成
 
-默认参考流程位于 `config/workflow_templates/software_dev.json`，但项目正在向“由管理者智能体按任务动态设计流程”的方向演进，固定模板仅作为参考，不应被视为最终形态。
+默认参考流程位于 `config/workflow_templates/software_dev.json`，但项目当前的方向是：
+
+- `Leader` 现场设计真实阶段实例
+- 阶段名称、数量、顺序不固定
+- 模板只作为参考 preset
+- 系统内部仅保留少量 `execution_profile` 作为执行锚点
 
 ## 目录结构
 
@@ -120,7 +157,7 @@ http://localhost:8000/
 
 1. 添加凭据（Credential）
 2. 在凭据下新增模型（Model）
-3. 绑定各阶段默认模型
+3. 绑定各执行轮廓默认模型
 4. 点击测试，确认模型可正常返回
 
 当前支持的提供方类型：
@@ -178,6 +215,10 @@ http://localhost:8000/
 - `POST /tasks/{task_id}/human-decisions`：提交人工决策
 - `GET /models`：查看当前模型视图
 - `POST /ai-registry/models/{model_id}/test`：测试某个模型
+- `GET /capabilities`：查看能力目录与 binding 配置
+- `POST /capabilities`：更新能力配置
+- `GET /skills`：查看 skill 目录
+- `POST /skills`：更新 skill 配置
 
 ## 测试
 

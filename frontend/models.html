@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>模型管理 - MACS</title>
-  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
@@ -235,12 +235,14 @@
           <button class="nav-toggle secondary" type="button" data-sidebar-toggle>菜单</button>
           <div>
             <h1>模型管理</h1>
-            <p class="page-subtitle">凭据、模型、阶段绑定。</p>
+            <p class="page-subtitle">凭据、模型、执行轮廓绑定。</p>
           </div>
         </div>
         <div class="page-actions">
           <a class="button-link secondary" href="/tasks.html">进入任务中心</a>
-          <a class="button-link" href="/capabilities.html">能力设置</a>
+          <a class="button-link secondary" href="/knowledge.html">知识库设置</a>
+          <a class="button-link secondary" href="/skills.html">技能策略</a>
+          <a class="button-link" href="/capabilities.html">能力执行</a>
         </div>
       </header>
 
@@ -258,7 +260,7 @@
         <div class="kpi-card">
           <div class="kpi-label">已绑定阶段</div>
           <div class="kpi-value" id="kpiBindings">0</div>
-          <div class="kpi-meta">默认阶段</div>
+          <div class="kpi-meta">默认执行轮廓</div>
         </div>
       </section>
 
@@ -305,13 +307,13 @@
           <section class="card">
             <div class="section-head">
               <div>
-                <h2>阶段绑定</h2>
-                <p>设置默认模型。</p>
+                <h2>执行轮廓绑定</h2>
+                <p>为内置执行轮廓设置默认模型。</p>
               </div>
             </div>
             <div id="bindingsForm" class="binding-grid"></div>
             <div class="actions">
-              <button type="button" onclick="saveBindings()">保存阶段绑定</button>
+              <button type="button" onclick="saveBindings()">保存执行轮廓绑定</button>
             </div>
           </section>
         </div>
@@ -319,9 +321,9 @@
     </main>
   </div>
 
-  <script src="/app-shell.js"></script>
+  <script src="/app-shell.js?v=20260326b"></script>
   <script>
-    let overview = { credentials: [], models: [], stage_bindings: {}, stages: [] };
+    let overview = { credentials: [], models: [], stage_bindings: {}, stages: [], execution_profiles: [] };
     let selectedCredentialId = null;
     let discoveredModels = [];
     let selectedDiscoveredModel = '';
@@ -364,7 +366,8 @@
 
     function renderBindings() {
       const modelOptions = ['<option value="">未绑定</option>'].concat((overview.models || []).filter(m => m.model_kind === 'llm').map(m => `<option value="${m.model_id}">${m.name} (${m.credential_name || 'Credential'})</option>`));
-      document.getElementById('bindingsForm').innerHTML = (overview.stages || []).map(stage => {
+      const profiles = overview.execution_profiles || overview.stages || [];
+      document.getElementById('bindingsForm').innerHTML = profiles.map(stage => {
         const current = (overview.stage_bindings || {})[stage] || '';
         return `
           <div class="subsection">

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>主页 - MACS</title>
-  <link rel="stylesheet" href="/app-shell.css?v=20260324a" />
+  <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
@@ -150,7 +150,7 @@
       <section id="setupBanner" class="callout">
         <div>
           <strong>尚未配置可用的 LLM 模型</strong>
-          <div>任务创建和执行都依赖已注册模型。建议先到模型管理页添加凭据、录入模型，并至少完成一个阶段绑定。</div>
+          <div>任务创建和执行都依赖已注册模型。建议先到模型管理页添加凭据、录入模型，并至少完成一个执行轮廓绑定。</div>
         </div>
         <a class="button-link" href="/models.html">前往模型管理</a>
       </section>
@@ -177,7 +177,7 @@
           <div class="kpi-meta">已完成</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">能力配置</div>
+          <div class="kpi-label">知识/能力配置</div>
           <div class="kpi-value" id="kpiCapabilities">0</div>
           <div class="kpi-meta">已填写项</div>
         </div>
@@ -196,10 +196,10 @@
           <div class="inline-field">
             <div>
               <label for="caps">能力需求</label>
-              <input id="caps" value="code.edit:v1" />
+              <input id="caps" value="" placeholder="如 asset.generate:v1, doc.write:v1" />
             </div>
             <div class="soft-note">
-              默认会带上 `code.edit:v1`。
+              可以留空；只有明确需要外部工具/接口时，再填写 capability。
               适合快速抛一个任务，再去详情页看工作流和模型对话。
             </div>
           </div>
@@ -212,7 +212,7 @@
         <section class="card">
           <div class="section-head">
             <div>
-              <h2>阶段绑定概览</h2>
+              <h2>执行轮廓绑定概览</h2>
               <p>当前默认模型。</p>
             </div>
           </div>
@@ -233,11 +233,11 @@
     </main>
   </div>
 
-  <script src="/app-shell.js?v=20260324a"></script>
+  <script src="/app-shell.js?v=20260326b"></script>
   <script>
     let tasks = [];
-    let overview = { credentials: [], models: [], stage_bindings: {}, stages: [] };
-    let capabilityState = { vector_model: '', rerank_model: '', notes: '' };
+    let overview = { credentials: [], models: [], stage_bindings: {}, stages: [], execution_profiles: [] };
+    let capabilityState = { vector_model: '', rerank_model: '', notes: '', bindings: [] };
 
     function escapeHtml(text) {
       return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -261,7 +261,11 @@
       const total = tasks.length;
       const active = tasks.filter((item) => ['created', 'running', 'waiting_user', 'aborting'].includes(item.status)).length;
       const done = tasks.filter((item) => item.status === 'completed').length;
-      const capabilityCount = [capabilityState.vector_model, capabilityState.rerank_model, capabilityState.notes].filter(Boolean).length;
+      const capabilityCount = [
+        capabilityState.vector_model,
+        capabilityState.rerank_model,
+        capabilityState.notes,
+      ].filter(Boolean).length + ((capabilityState.bindings || []).filter((item) => item && item.enabled !== false).length);
       document.getElementById('kpiModels').textContent = String((overview.models || []).length);
       document.getElementById('kpiTasks').textContent = String(total);
       document.getElementById('kpiActive').textContent = String(active);
@@ -271,9 +275,9 @@
 
     function renderBindings() {
       const box = document.getElementById('bindingList');
-      const stages = overview.stages || [];
+      const stages = overview.execution_profiles || overview.stages || [];
       if (!stages.length) {
-        box.innerHTML = '<div class="empty-state">暂无阶段绑定信息。</div>';
+        box.innerHTML = '<div class="empty-state">暂无执行轮廓绑定信息。</div>';
         return;
       }
       box.innerHTML = stages.map((stage) => {
