@@ -1,4 +1,60 @@
 (function () {
+  const API_CACHE = new Map();
+  const API_INFLIGHT = new Map();
+
+  function apiCacheKey(url) {
+    return String(url || '');
+  }
+
+  async function fetchJson(url, init) {
+    const resp = await fetch(url, init);
+    const data = await resp.json();
+    if (!resp.ok) {
+      const error = new Error(data?.detail || `请求失败（HTTP ${resp.status}）`);
+      error.response = resp;
+      error.data = data;
+      throw error;
+    }
+    return data;
+  }
+
+  async function cachedJson(url, { ttlMs = 15000, force = false, init } = {}) {
+    const key = apiCacheKey(url);
+    const now = Date.now();
+    const cached = API_CACHE.get(key);
+    if (!force && cached && (now - cached.timestamp) < ttlMs) {
+      return cached.data;
+    }
+    if (!force && API_INFLIGHT.has(key)) {
+      return API_INFLIGHT.get(key);
+    }
+    const request = fetchJson(url, init)
+      .then((data) => {
+        API_CACHE.set(key, { data, timestamp: Date.now() });
+        API_INFLIGHT.delete(key);
+        return data;
+      })
+      .catch((error) => {
+        API_INFLIGHT.delete(key);
+        throw error;
+      });
+    API_INFLIGHT.set(key, request);
+    return request;
+  }
+
+  function invalidate(urlPrefix = '') {
+    const prefix = String(urlPrefix || '');
+    [...API_CACHE.keys()].forEach((key) => {
+      if (!prefix || key.startsWith(prefix)) API_CACHE.delete(key);
+    });
+  }
+
+  window.MacsApi = {
+    fetchJson,
+    cachedJson,
+    invalidate,
+  };
+
   const body = document.body;
   if (!body || !body.classList.contains('app-page')) return;
 

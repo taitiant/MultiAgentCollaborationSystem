@@ -6,8 +6,6 @@
   <title>模型管理 - MACS</title>
   <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
-
     .model-layout {
       display: grid;
       grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
@@ -130,7 +128,10 @@
       border-radius: 16px;
       background: rgba(255, 255, 255, 0.96);
       overflow: hidden;
-      max-height: 240px;
+      height: var(--discover-panel-height, 240px);
+      min-height: 140px;
+      max-height: 420px;
+      resize: vertical;
       overflow-y: auto;
     }
 
@@ -159,6 +160,37 @@
       background: #f5f9ff;
     }
 
+    .discover-toolbar {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .discover-meta {
+      color: #607286;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .discover-skeleton {
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+    }
+
+    .discover-skeleton-row {
+      height: 34px;
+      border-radius: 12px;
+      background: linear-gradient(90deg, #eef3f8 0%, #f7fafe 50%, #eef3f8 100%);
+      background-size: 220% 100%;
+      animation: discoverShimmer 1.2s linear infinite;
+    }
+
+    @keyframes discoverShimmer {
+      from { background-position: 220% 0; }
+      to { background-position: 0 0; }
+    }
+
     .binding-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -172,6 +204,17 @@
       background: rgba(247, 250, 254, 0.94);
       color: #607286;
       text-align: center;
+    }
+
+    .render-error {
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 1px solid #ffd0cb;
+      background: #fff4f3;
+      color: #be2d1f;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
 
     .test-status {
@@ -203,6 +246,22 @@
       border-radius: 999px;
       background: currentColor;
       opacity: 0.8;
+    }
+
+    .result-panel {
+      margin-top: 12px;
+      height: var(--discover-output-height, 220px);
+      min-height: 140px;
+      max-height: 420px;
+      resize: vertical;
+      overflow: auto;
+      border-radius: 14px;
+    }
+
+    .result-panel pre {
+      margin: 0;
+      min-height: 100%;
+      max-height: none;
     }
 
     @media (max-width: 1180px) {
@@ -324,10 +383,23 @@
   <script src="/app-shell.js?v=20260326b"></script>
   <script>
     let overview = { credentials: [], models: [], stage_bindings: {}, stages: [], execution_profiles: [] };
+    let allModels = [];
     let selectedCredentialId = null;
     let discoveredModels = [];
     let selectedDiscoveredModel = '';
+    let discoverQuery = '';
+    let discoverExpanded = false;
+    let isDiscoverLoading = false;
+    let credentialModelQuery = '';
+    let credentialModelsExpanded = false;
     let lastTestResult = { kind: 'idle', title: '尚未测试', data: null };
+    const api = window.MacsApi;
+    const DISCOVERED_MODEL_INITIAL_LIMIT = 60;
+    const CREDENTIAL_MODEL_INITIAL_LIMIT = 30;
+
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
 
     function currentCredential() {
       return (overview.credentials || []).find(item => item.credential_id === selectedCredentialId) || null;
@@ -337,14 +409,52 @@
       return (overview.models || []).filter(item => item.credential_id === credentialId);
     }
 
-    async function fetchOverview() {
-      overview = await (await fetch('/ai-registry/overview')).json();
-      return overview;
+    function filteredCredentialModels(credentialId) {
+      const query = String(credentialModelQuery || '').trim().toLowerCase();
+      const items = modelsForCredential(credentialId);
+      if (!query) return items;
+      return items.filter((item) => {
+        const name = String(item?.name || '').toLowerCase();
+        const provider = String(item?.provider_type || '').toLowerCase();
+        const kind = String(item?.model_kind || '').toLowerCase();
+        return name.includes(query) || provider.includes(query) || kind.includes(query);
+      });
+    }
+
+    async function fetchCredentials() {
+      const data = await api.cachedJson('/ai-registry/credentials', { ttlMs: 30000 });
+      overview.credentials = data.credentials || [];
+      return overview.credentials;
+    }
+
+    async function fetchBindings() {
+      const data = await api.cachedJson('/ai-registry/stage-bindings', { ttlMs: 30000 });
+      overview.stage_bindings = data.bindings || {};
+      overview.stages = data.stages || [];
+      overview.execution_profiles = data.execution_profiles || [];
+      return data;
+    }
+
+    async function fetchAllModels() {
+      const data = await api.cachedJson('/ai-registry/models', { ttlMs: 30000 });
+      allModels = data.models || [];
+      return allModels;
+    }
+
+    async function fetchModelsForCredential(credentialId, { force = false } = {}) {
+      const id = String(credentialId || '').trim();
+      if (!id) {
+        overview.models = [];
+        return [];
+      }
+      const data = await api.cachedJson(`/ai-registry/models?credential_id=${encodeURIComponent(id)}`, { ttlMs: 30000, force });
+      overview.models = data.models || [];
+      return overview.models;
     }
 
     function updateKpis() {
       document.getElementById('kpiCredentials').textContent = String((overview.credentials || []).length);
-      document.getElementById('kpiModels').textContent = String((overview.models || []).length);
+      document.getElementById('kpiModels').textContent = String((allModels || []).length);
       document.getElementById('kpiBindings').textContent = String(Object.values(overview.stage_bindings || {}).filter(Boolean).length);
     }
 
@@ -365,7 +475,7 @@
     }
 
     function renderBindings() {
-      const modelOptions = ['<option value="">未绑定</option>'].concat((overview.models || []).filter(m => m.model_kind === 'llm').map(m => `<option value="${m.model_id}">${m.name} (${m.credential_name || 'Credential'})</option>`));
+      const modelOptions = ['<option value="">未绑定</option>'].concat((allModels || []).filter(m => m.model_kind === 'llm').map(m => `<option value="${m.model_id}">${m.name} (${m.credential_name || 'Credential'})</option>`));
       const profiles = overview.execution_profiles || overview.stages || [];
       document.getElementById('bindingsForm').innerHTML = profiles.map(stage => {
         const current = (overview.stage_bindings || {})[stage] || '';
@@ -382,7 +492,9 @@
       document.getElementById('credentialCreateCard').style.display = 'block';
       document.getElementById('credentialDetail').style.display = 'none';
       selectedCredentialId = null;
+      overview.models = [];
       renderCredentialList();
+      renderBindings();
     }
 
     function cancelCreateCredential() {
@@ -409,19 +521,25 @@
       document.getElementById('credBaseUrl').value = '';
       document.getElementById('credApiKey').value = '';
       document.getElementById('credentialCreateCard').style.display = 'none';
+      api.invalidate('/ai-registry/credentials');
+      api.invalidate('/ai-registry/overview');
       await refreshAll();
       selectedCredentialId = data.credential_id;
       renderCredentialList();
       renderCredentialDetail();
     }
 
-    function selectCredential(id) {
+    async function selectCredential(id) {
       selectedCredentialId = id;
       document.getElementById('credentialCreateCard').style.display = 'none';
       document.getElementById('credentialDetail').style.display = 'block';
       discoveredModels = [];
       selectedDiscoveredModel = '';
+      credentialModelQuery = '';
+      credentialModelsExpanded = false;
       renderCredentialList();
+      renderCredentialDetail(true);
+      await fetchModelsForCredential(id);
       renderCredentialDetail();
     }
 
@@ -436,6 +554,24 @@
       if (output) output.textContent = data ? JSON.stringify(data, null, 2) : '尚未测试';
     }
 
+    function showCredentialRenderError(error) {
+      const box = document.getElementById('credentialDetail');
+      if (!box) return;
+      box.className = 'card';
+      box.innerHTML = `
+        <div class="render-error">
+          <strong>模型页渲染失败</strong><br><br>
+          ${escapeHtml(error?.message || String(error || '未知错误'))}
+        </div>
+      `;
+    }
+
+    function filteredDiscoveredModels() {
+      const query = String(discoverQuery || '').trim().toLowerCase();
+      if (!query) return [...discoveredModels];
+      return discoveredModels.filter((item) => String(item?.name || '').toLowerCase().includes(query));
+    }
+
     async function testSelectedCredential() {
       if (!selectedCredentialId) return;
       setTestResult('idle', '正在测试凭据连接...', { status: 'running' });
@@ -448,11 +584,17 @@
 
     async function discoverSelectedCredentialModels() {
       if (!selectedCredentialId) return;
+      isDiscoverLoading = true;
+      discoveredModels = [];
+      selectedDiscoveredModel = '';
+      discoverExpanded = false;
+      renderCredentialDetail(true);
       const resp = await fetch(`/ai-registry/credentials/${selectedCredentialId}/discover-models`, { method:'POST' });
       const data = await resp.json();
       setTestResult(resp.ok && data.ok !== false ? 'success' : 'error', resp.ok && data.ok !== false ? '模型列表拉取成功' : '模型列表拉取失败', data);
       discoveredModels = data.models || [];
       if (!selectedDiscoveredModel && discoveredModels.length) selectedDiscoveredModel = discoveredModels[0].name;
+      isDiscoverLoading = false;
       renderCredentialDetail();
     }
 
@@ -467,6 +609,8 @@
       if (!resp.ok) return alert(data.detail || '添加模型失败');
       selectedDiscoveredModel = modelName;
       if (document.getElementById('manualModelName')) document.getElementById('manualModelName').value = '';
+      api.invalidate('/ai-registry/overview');
+      api.invalidate('/ai-registry/models');
       await refreshAll();
       renderCredentialDetail();
     }
@@ -477,6 +621,9 @@
       const data = await resp.json();
       if (!resp.ok) return alert(data.detail || '删除失败');
       if (selectedCredentialId === id) selectedCredentialId = null;
+      api.invalidate('/ai-registry/credentials');
+      api.invalidate('/ai-registry/overview');
+      api.invalidate('/ai-registry/models');
       await refreshAll();
       renderCredentialDetail();
     }
@@ -486,6 +633,8 @@
       const resp = await fetch(`/ai-registry/models/${id}`, { method:'DELETE' });
       const data = await resp.json();
       if (!resp.ok) return alert(data.detail || '删除失败');
+      api.invalidate('/ai-registry/overview');
+      api.invalidate('/ai-registry/models');
       await refreshAll();
       renderCredentialDetail();
     }
@@ -504,7 +653,8 @@
       if (!resp.ok) alert(data.detail || '模型测试失败');
     }
 
-    function renderCredentialDetail() {
+    function renderCredentialDetail(isLoadingModels = false) {
+      try {
       const box = document.getElementById('credentialDetail');
       const cred = currentCredential();
       if (!cred) {
@@ -513,6 +663,12 @@
         return;
       }
       const models = modelsForCredential(cred.credential_id);
+      const filteredCredentialList = filteredCredentialModels(cred.credential_id);
+      const visibleCredentialModels = credentialModelsExpanded ? filteredCredentialList : filteredCredentialList.slice(0, CREDENTIAL_MODEL_INITIAL_LIMIT);
+      const hiddenCredentialCount = Math.max(0, filteredCredentialList.length - visibleCredentialModels.length);
+      const filteredModels = filteredDiscoveredModels();
+      const visibleDiscoveredModels = discoverExpanded ? filteredModels : filteredModels.slice(0, DISCOVERED_MODEL_INITIAL_LIMIT);
+      const hiddenDiscoverCount = Math.max(0, filteredModels.length - visibleDiscoveredModels.length);
       box.className = 'card';
       box.innerHTML = `
         <div class="section-head">
@@ -533,8 +689,21 @@
             <div class="muted">优先点击“拉取模型列表”选择；如果接口不支持，也可以手动填写模型名，例如 gpt-5.4。</div>
             <label>模型名</label>
             <input id="manualModelName" placeholder="例如 gpt-5.4 / qwen-plus / gemini-flash-latest" value="${selectedDiscoveredModel || ''}" />
-            ${discoveredModels.length ? `
-              <div class="discover-list">${discoveredModels.map(item => `<button type="button" class="discover-item ${selectedDiscoveredModel === item.name ? 'active' : ''}" onclick="selectDiscoveredModel('${item.name.replace(/'/g, "\\'")}')">${item.name}</button>`).join('')}</div>
+            <div class="discover-toolbar">
+              <input type="search" placeholder="筛选拉取到的模型名" value="${escapeHtml(discoverQuery)}" oninput="updateDiscoverQuery(this.value)" />
+              <div class="discover-meta">
+                ${isDiscoverLoading ? '正在拉取模型列表…' : discoveredModels.length ? `共拉取 ${discoveredModels.length} 个模型，当前显示 ${visibleDiscoveredModels.length} 个。` : '还没有发现到模型列表，可以直接手填模型名。'}
+              </div>
+            </div>
+            ${isDiscoverLoading ? `
+              <div class="discover-list">
+                <div class="discover-skeleton">
+                  ${Array.from({ length: 6 }).map(() => '<div class="discover-skeleton-row"></div>').join('')}
+                </div>
+              </div>
+            ` : discoveredModels.length ? `
+              <div class="discover-list">${visibleDiscoveredModels.map(item => `<button type="button" class="discover-item ${selectedDiscoveredModel === item.name ? 'active' : ''}" onclick="selectDiscoveredModel('${item.name.replace(/'/g, "\\'")}')">${item.name}</button>`).join('')}</div>
+              ${hiddenDiscoverCount > 0 ? `<div class="actions"><button type="button" class="secondary" onclick="toggleDiscoverExpanded()">再显示 ${hiddenDiscoverCount} 个</button></div>` : ''}
             ` : '<div class="muted" style="margin-top:10px;">还没有发现到模型列表，可以直接手填模型名。</div>'}
             <div class="actions">
               <button type="button" onclick="addModelForSelectedCredential()">添加模型</button>
@@ -544,14 +713,20 @@
           <div class="subsection">
             <div class="section-title" style="font-size:16px;">连接反馈</div>
             <div id="credentialTestBadge" class="test-status ${lastTestResult.kind}"><span class="test-dot"></span><div>${lastTestResult.title}</div></div>
-            <pre id="credentialTestOutput" style="margin-top:12px;">${lastTestResult.data ? JSON.stringify(lastTestResult.data, null, 2) : "尚未测试"}</pre>
+            <div class="result-panel">
+              <pre id="credentialTestOutput">${lastTestResult.data ? JSON.stringify(lastTestResult.data, null, 2) : "尚未测试"}</pre>
+            </div>
           </div>
         </div>
 
         <div class="subsection" style="margin-top:14px;">
           <div class="section-title" style="font-size:16px;">该凭据下的模型</div>
+          <div class="model-toolbar">
+            <input type="search" placeholder="筛选当前凭据下的模型" value="${escapeHtml(credentialModelQuery)}" oninput="updateCredentialModelQuery(this.value)" />
+            <div class="model-toolbar-meta">共 ${models.length} 个模型，当前显示 ${visibleCredentialModels.length} 个。</div>
+          </div>
           <div class="model-list">
-            ${models.length ? models.map(model => `
+            ${isLoadingModels ? '<div class="empty">正在加载该凭据下的模型列表…</div>' : visibleCredentialModels.length ? visibleCredentialModels.map(model => `
               <div class="model-row">
                 <div>
                   <div><strong>${model.name}</strong></div>
@@ -562,10 +737,15 @@
                   <button type="button" class="danger" onclick="deleteModel('${model.model_id}')">删除</button>
                 </div>
               </div>
-            `).join('') : '<div class="empty">该凭据下还没有模型。</div>'}
+            `).join('') : '<div class="empty">当前筛选条件下没有模型。</div>'}
           </div>
+          ${hiddenCredentialCount > 0 ? `<div class="actions"><button type="button" class="secondary" onclick="toggleCredentialModelsExpanded()">再显示 ${hiddenCredentialCount} 个</button></div>` : ''}
         </div>
       `;
+      } catch (error) {
+        console.error('renderCredentialDetail failed:', error);
+        showCredentialRenderError(error);
+      }
     }
 
     function selectDiscoveredModel(name) {
@@ -575,17 +755,45 @@
       renderCredentialDetail();
     }
 
+    function updateDiscoverQuery(value) {
+      discoverQuery = String(value || '');
+      discoverExpanded = false;
+      renderCredentialDetail();
+    }
+
+    function toggleDiscoverExpanded() {
+      discoverExpanded = !discoverExpanded;
+      renderCredentialDetail();
+    }
+
+    function updateCredentialModelQuery(value) {
+      credentialModelQuery = String(value || '');
+      credentialModelsExpanded = false;
+      renderCredentialDetail();
+    }
+
+    function toggleCredentialModelsExpanded() {
+      credentialModelsExpanded = !credentialModelsExpanded;
+      renderCredentialDetail();
+    }
+
     async function saveBindings() {
       const bindings = {};
       document.querySelectorAll('#bindingsForm [data-stage]').forEach(el => { bindings[el.dataset.stage] = el.value || null; });
       const resp = await fetch('/ai-registry/stage-bindings', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ bindings }) });
       const data = await resp.json();
       if (!resp.ok) return alert(data.detail || '保存失败');
+      api.invalidate('/ai-registry/overview');
       await refreshAll();
     }
 
     async function refreshAll() {
-      await fetchOverview();
+      await Promise.all([fetchCredentials(), fetchBindings(), fetchAllModels()]);
+      if (selectedCredentialId) {
+        await fetchModelsForCredential(selectedCredentialId);
+      } else {
+        overview.models = [];
+      }
       updateKpis();
       renderCredentialList();
       renderBindings();

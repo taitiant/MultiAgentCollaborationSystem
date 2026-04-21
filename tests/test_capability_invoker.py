@@ -1,4 +1,4 @@
-from orchestration.capability_invoker import (
+from orchestration.capabilities.invoker import (
     build_capability_invoke_prompt,
     build_requested_capability_execution,
     extract_capability_invocations_from_text,

@@ -25,6 +25,7 @@ MACS 当前聚焦于“软件开发任务编排”：
 - 人工决策入口：当系统判断需要人工介入时，可在任务中补充意见
 - AI 注册中心：支持凭据、模型、执行轮廓绑定、模型测试
 - 多模型适配：支持 `openai-compatible`、`openai`、`codex`、`gemini`
+- 运行时内核收口：集中管理任务状态、中止信号、事件发布、插件通知与审计落盘
 - 任务可续跑：失败、返工、中断后可以继续推进
 - 工作区隔离：每个任务有独立目录，保存设计、代码、测试和文档产物
 
@@ -54,6 +55,14 @@ MACS 现在采用分层增强机制：
 Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
 ```
 
+在执行路径上，系统现在额外引入一个轻量 `Runtime` 层：
+
+```text
+API / Workflow -> Runtime -> Event / Status / Abort / Plugins -> Agent / Capability
+```
+
+它负责把任务生命周期、事件审计和插件回调从 API 与工作流逻辑中解耦出来，为后续演进到更接近 AutoGen Core 的事件驱动运行时打基础。
+
 注意：
 
 - `Skill` 不等于 `Capability`
@@ -65,9 +74,9 @@ Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
 当前相关文件：
 
 - `config/skills.json`
-- `orchestration/skill_registry.py`
+- `orchestration/skills/registry.py`
 - `config/capabilities.json`
-- `orchestration/capability_registry.py`
+- `orchestration/capabilities/registry.py`
 - `docs/skill_capability_architecture.md`
 
 ## 核心流程
@@ -98,7 +107,7 @@ Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
 ├── core/                   # 核心数据结构
 ├── domains/software_dev/   # 软件开发域智能体
 ├── frontend/               # 静态前端页面
-├── orchestration/          # 编排、协作、工作区清理、计划生成
+├── orchestration/          # 编排与运行时核心模块，已按职责拆分为多个子包
 ├── plugins/                # 日志与指标插件
 ├── server/                 # FastAPI 服务入口
 ├── storage/                # 文件存储
@@ -110,7 +119,28 @@ Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
 几个关键文件：
 
 - `server/app.py`：服务入口与主要 API
-- `orchestration/graph_builder.py`：工作流编排核心
+- `orchestration/graph_builder.py`：工作流编排主入口，负责构图与少量编排辅助
+- `orchestration/application/tasks.py`：任务应用服务，承接创建、续跑、重跑、人工决策等任务动作
+- `orchestration/bootstrap/container.py`：应用装配入口，集中构造配置、registry、runtime 与 runner
+- `orchestration/execution/`：运行时、阶段执行、返工策略、执行编排等核心执行模块
+- `orchestration/planning/`：动态规划、阶段评审、节点工厂、阶段目录与文档规则
+- `orchestration/capabilities/`：能力目录、绑定、协议、调用器、处理器与能力运行时
+- `orchestration/collab/`：协作线程、黑板快照与提示上下文
+- `orchestration/skills/registry.py`：技能目录与运行时 skill guidance
+- `orchestration/mcp/registry.py`：MCP 服务注册与绑定展开
+- `orchestration/file_utils.py`：工作区目录初始化与文本文件写入工具
+
+目录整理说明：
+
+- 原先堆在 `orchestration/` 根目录中的运行时、能力、协作、规划、技能与 MCP 注册模块，已经迁移到对应子包。
+- 当前 `orchestration/` 根目录主要保留 `graph_builder.py` 与 `file_utils.py` 这类跨层公共入口。
+- `GraphBuilder` 当前不再以“继续压缩行数”为目标，而是以职责边界清晰、对外入口稳定为优先。
+
+当前装配层已经进一步拆成多个容器：
+
+- `config container`：路径、工作流模板、capability/mcp/skill 配置
+- `infrastructure container`：存储、模型注册、日志与指标插件
+- `execution container`：graph builder、runtime、workflow runner
 - `adapters/model_registry.py`：模型注册与路由
 - `frontend/task.html`：任务详情页
 
@@ -118,7 +148,7 @@ Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
 
 - 后端：FastAPI
 - 编排：LangGraph
-- 存储：SQLite
+- 存储：Docker Compose 默认使用 PostgreSQL，本地直跑未配置 `DB_URL` 时回退为 SQLite
 - 前端：原生 HTML / CSS / JavaScript
 - 模型调用：OpenAI-compatible / Codex / Gemini 适配层
 - 部署：Docker Compose
@@ -130,6 +160,12 @@ Agent -> (受 Skill 影响决策) -> 直接调用 Capability -> Executor
 ```bash
 docker-compose up -d --build
 ```
+
+默认会启动 3 个容器：
+
+- `macs-macs`
+- `macs-pgsql`
+- `macs-nginx`
 
 启动后访问：
 
@@ -200,7 +236,8 @@ http://localhost:8000/
 
 运行时数据库位于：
 
-- `data/runtime.db`
+- Docker Compose 默认使用 PostgreSQL
+- 本地未配置 `DB_URL` 时回退到 `data/runtime.db`
 
 ## API 概览
 

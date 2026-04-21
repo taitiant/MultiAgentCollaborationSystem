@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import PurePosixPath
 from typing import Any, Dict, List, Callable, Optional
 
 from core import Task, SystemState, new_message
@@ -29,6 +30,13 @@ class TestAgent:
             self.progress_callback(payload)
         except Exception:
             return
+
+    def _exit_code(self, result: Dict[str, Any], default: int = 1) -> int:
+        value = result.get("exit_code")
+        try:
+            return int(default if value is None else value)
+        except Exception:
+            return int(default)
 
     def _stage_config(self, task: Task) -> Dict[str, Any]:
         event_configs = (task.context or {}).get("event_configs") or {}
@@ -138,6 +146,7 @@ class TestAgent:
         project_stack: str,
         source_files: list[str],
         compile_result: Dict[str, Any],
+        startup_result: Dict[str, Any] | None = None,
     ) -> str:
         spec = str((task.context or {}).get('spec') or '')
         file_list = self._format_source_file_list(
@@ -145,21 +154,34 @@ class TestAgent:
             source_files,
             '未发现可执行源码文件',
         )
-        compile_exit = int(compile_result.get("exit_code", 1) or 1)
+        compile_exit = self._exit_code(compile_result, default=1)
         compile_command = str(compile_result.get("command") or "-")
+        startup = dict(startup_result or {})
+        startup_command = str(startup.get("command") or "-")
+        startup_exit = startup.get("exit_code")
+        startup_exit_text = "-" if startup_exit is None else str(self._exit_code(startup, default=1))
         if project_stack == "web":
             validation_label = "静态资源校验"
-            validation_desc = "已执行 Web 静态文件存在性与引用完整性校验。"
+            validation_desc = "已执行 Web 静态文件存在性与引用完整性校验。" if compile_exit == 0 else "Web 静态文件校验失败，存在资源或入口问题。"
             risk_focus = (
                 '- 浏览器渲染与交互体验仍需人工走查\n'
                 '- 控制台报错、动画流畅度与碰撞体验需结合真实页面确认\n'
             )
         else:
             validation_label = "源码编译校验"
-            validation_desc = "已执行 Python 编译校验，确认基础语法可通过。"
+            validation_desc = "已执行 Python 编译校验，确认基础语法可通过。" if compile_exit == 0 else "Python 编译校验失败，当前代码尚未通过基础语法验证。"
             risk_focus = (
                 '- 运行时交互与异常分支仍需人工走查\n'
                 '- 性能、兼容性与边界行为需结合真实运行进一步确认\n'
+            )
+        startup_section = ""
+        if startup:
+            startup_desc = "入口导入/启动链校验通过。" if str(startup.get("error") or "") == "" and self._exit_code(startup, default=1) == 0 else "入口导入/启动链校验失败，当前不能保证 README 声明的运行方式可用。"
+            startup_section = (
+                '\n## 入口冒烟校验\n'
+                f'- 执行命令：`{startup_command}`\n'
+                f'- 退出码：{startup_exit_text}\n'
+                f'- 说明：{startup_desc}\n'
             )
         return (
             '# 测试报告（自动回退）\n\n'
@@ -171,6 +193,7 @@ class TestAgent:
             f'- 执行命令：`{compile_command}`\n'
             f'- 退出码：{compile_exit}\n'
             f'- 说明：{validation_desc}\n\n'
+            f'{startup_section}\n'
             '## 手工测试清单\n'
             f'{self._build_manual_checklist(task, project_stack)}\n'
             '## 待人工重点确认\n'
@@ -251,6 +274,41 @@ class TestAgent:
         result = self.executor.run(compile_cmd, cwd=workspace, env=self._build_exec_env(workspace))
         return {"command": compile_cmd, **result}
 
+    def _module_name_from_path(self, workspace: str, path: str) -> str:
+        rel = os.path.relpath(path, workspace).replace("\\", "/")
+        pure = PurePosixPath(rel)
+        parts = list(pure.parts)
+        if parts and parts[-1].endswith(".py"):
+            parts[-1] = parts[-1][:-3]
+        return ".".join(part for part in parts if part and part != "__init__")
+
+    def _discover_startup_target(self, workspace: str, py_files: list[str]) -> str:
+        preferred = [
+            os.path.join(workspace, "code", "main.py"),
+            os.path.join(workspace, "main.py"),
+            os.path.join(workspace, "app", "main.py"),
+            os.path.join(workspace, "src", "main.py"),
+        ]
+        normalized = {os.path.abspath(path): path for path in py_files}
+        for candidate in preferred:
+            if os.path.abspath(candidate) in normalized:
+                return normalized[os.path.abspath(candidate)]
+        return py_files[0] if py_files else ""
+
+    def _run_startup_smoke_check(self, workspace: str, py_files: list[str]) -> Dict[str, Any]:
+        target = self._discover_startup_target(workspace, py_files)
+        if not target:
+            return {"command": "-", "stdout": "", "stderr": "missing_startup_target", "exit_code": 1}
+        module_name = self._module_name_from_path(workspace, target)
+        if not module_name:
+            return {"command": "-", "stdout": "", "stderr": "invalid_startup_module", "exit_code": 1}
+        command = f'python -c "import importlib; importlib.import_module(\'{module_name}\')"'
+        env = self._build_exec_env(workspace)
+        env.setdefault("SDL_VIDEODRIVER", "dummy")
+        env.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+        result = self.executor.run(command, cwd=workspace, env=env)
+        return {"command": command, "module": module_name, "target": os.path.relpath(target, workspace), **result}
+
     def _write_manual_report(
         self,
         task: Task,
@@ -259,6 +317,7 @@ class TestAgent:
         project_stack: str,
         source_files: list[str],
         compile_result: Dict[str, Any],
+        startup_result: Dict[str, Any] | None = None,
     ) -> str:
         report_path = os.path.join(workspace, 'tests', 'manual_test_report.md')
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
@@ -270,6 +329,7 @@ class TestAgent:
                     project_stack=project_stack,
                     source_files=source_files,
                     compile_result=compile_result,
+                    startup_result=startup_result,
                 )
             )
         return report_path
@@ -295,7 +355,7 @@ class TestAgent:
             self._emit_progress(
                 progress_kind="test",
                 progress_state="done",
-                message=f"全面测试完成（exit={int(result.get('exit_code', 0) or 0)}）",
+                message=f"全面测试完成（exit={self._exit_code(result, default=0)})",
             )
             artifacts.append({"type": "test_result", "uri": "inline", "content": {"command": test_cmd, **result}})
 
@@ -310,9 +370,23 @@ class TestAgent:
                 self._emit_progress(
                     progress_kind="compile",
                     progress_state="done",
-                    message=f"编译校验完成（exit={int(compile_result.get('exit_code', 0) or 0)}）",
+                    message=f"编译校验完成（exit={self._exit_code(compile_result, default=0)})",
                 )
                 artifacts.append({"type": "compile_result", "uri": "inline", "content": compile_result})
+                startup_result = None
+                if self._exit_code(compile_result, default=1) == 0:
+                    self._emit_progress(
+                        progress_kind="startup",
+                        progress_state="start",
+                        message="正在执行入口冒烟校验",
+                    )
+                    startup_result = self._run_startup_smoke_check(workspace, py_files)
+                    self._emit_progress(
+                        progress_kind="startup",
+                        progress_state="done",
+                        message=f"入口冒烟校验完成（exit={self._exit_code(startup_result, default=0)})",
+                    )
+                    artifacts.append({"type": "startup_smoke_result", "uri": "inline", "content": startup_result})
                 self._emit_progress(
                     progress_kind="report",
                     progress_state="start",
@@ -324,6 +398,7 @@ class TestAgent:
                     project_stack=project_stack,
                     source_files=source_files,
                     compile_result=compile_result,
+                    startup_result=startup_result,
                 )
                 self._emit_progress(
                     progress_kind="report",
@@ -341,9 +416,23 @@ class TestAgent:
             self._emit_progress(
                 progress_kind="compile",
                 progress_state="done",
-                message=f"编译校验完成（exit={int(compile_result.get('exit_code', 0) or 0)}）",
+                message=f"编译校验完成（exit={self._exit_code(compile_result, default=0)})",
             )
             artifacts.append({"type": "test_result", "uri": "inline", "content": compile_result})
+            startup_result = None
+            if project_stack == "python" and py_files and self._exit_code(compile_result, default=1) == 0:
+                self._emit_progress(
+                    progress_kind="startup",
+                    progress_state="start",
+                    message="正在执行入口冒烟校验",
+                )
+                startup_result = self._run_startup_smoke_check(workspace, py_files)
+                self._emit_progress(
+                    progress_kind="startup",
+                    progress_state="done",
+                    message=f"入口冒烟校验完成（exit={self._exit_code(startup_result, default=0)})",
+                )
+                artifacts.append({"type": "startup_smoke_result", "uri": "inline", "content": startup_result})
             self._emit_progress(
                 progress_kind="report",
                 progress_state="start",
@@ -355,6 +444,7 @@ class TestAgent:
                 project_stack=project_stack,
                 source_files=source_files,
                 compile_result=compile_result,
+                startup_result=startup_result,
             )
             self._emit_progress(
                 progress_kind="report",

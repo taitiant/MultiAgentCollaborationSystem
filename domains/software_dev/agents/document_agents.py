@@ -4,13 +4,13 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from core import SystemState, Task
-from orchestration.collaboration import append_prompt_with_runtime_context
-from orchestration.document_rules import (
+from orchestration.collab.context import append_prompt_with_runtime_context
+from orchestration.planning.document_rules import (
     _infer_declared_stack,
     _infer_project_stack,
     _normalize_architecture_markdown,
 )
-from orchestration.stage_catalog import (
+from orchestration.planning.stage_catalog import (
     ARCHITECTURE_FILE_LIST_HINT,
     TEXT_OUTPUT_QUALITY_GUARDRAIL,
     normalize_stage_type,

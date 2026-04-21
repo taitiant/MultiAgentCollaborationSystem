@@ -3,8 +3,8 @@ import json
 import zipfile
 
 from core import SystemState, Task
-from orchestration.capability_runtime import CapabilityRuntime
-from orchestration.capability_registry import merge_capability_settings
+from orchestration.capabilities.registry import merge_capability_settings
+from orchestration.capabilities.runtime import CapabilityRuntime
 
 
 def _demo_task(tmp_path):

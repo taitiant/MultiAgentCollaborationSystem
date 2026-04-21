@@ -1,3 +1,5 @@
+"""从 Agent 输出中提取内联能力调用指令的辅助工具。"""
+
 from __future__ import annotations
 
 import copy
@@ -6,7 +8,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 from core import AgentMessage
-from orchestration.capability_protocol import summarize_contract
+from orchestration.capabilities.protocol import summarize_contract
 
 
 CAPABILITY_INVOKE_FENCE_RE = re.compile(

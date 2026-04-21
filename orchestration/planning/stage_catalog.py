@@ -1,10 +1,12 @@
+"""工作流规划阶段使用的阶段蓝图、归一化工具与默认提示词。"""
+
 from __future__ import annotations
 
 import re
 from typing import Any, Dict
 
-from orchestration.capability_registry import default_capabilities_for_stage
-from orchestration.skill_registry import default_skills_for_stage
+from orchestration.capabilities.registry import default_capabilities_for_stage
+from orchestration.skills.registry import default_skills_for_stage
 
 
 DEFAULT_STAGE_PROMPTS = {

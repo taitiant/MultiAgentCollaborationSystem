@@ -6,8 +6,6 @@
   <title>任务中心 - MACS</title>
   <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
-
     .toolbar-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(280px, 1fr));
@@ -345,6 +343,7 @@
     let allProviders = [];
     let isExecuting = false;
     let livePollTimer = null;
+    const api = window.MacsApi;
 
     function escapeHtml(text) {
       return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -489,15 +488,13 @@
     }
 
     async function loadProviders() {
-      const resp = await fetch('/models');
-      const data = await resp.json();
+      const data = await api.cachedJson('/models', { ttlMs: 30000 });
       allProviders = data.providers || [];
       renderSetupBanner();
     }
 
     async function loadTasks() {
-      const resp = await fetch('/tasks');
-      tasks = await resp.json();
+      tasks = await api.fetchJson('/tasks');
       renderKpis();
       if (selectedTaskId && !tasks.some((task) => task.task_id === selectedTaskId)) {
         selectedTaskId = '';
@@ -522,17 +519,12 @@
         return;
       }
       selectedTask = tasks.find((task) => task.task_id === selectedTaskId) || null;
-      const [eventsResp, cfgResp] = await Promise.all([
-        fetch(`/events?task_id=${encodeURIComponent(selectedTaskId)}`),
-        fetch(`/tasks/${encodeURIComponent(selectedTaskId)}/event-configs`),
+      const [eventsData, cfg] = await Promise.all([
+        api.fetchJson(`/events?task_id=${encodeURIComponent(selectedTaskId)}`),
+        api.fetchJson(`/tasks/${encodeURIComponent(selectedTaskId)}/event-configs`),
       ]);
-      selectedTaskEvents = await eventsResp.json();
-      if (cfgResp.ok) {
-        const cfg = await cfgResp.json();
-        stageDefinitions = cfg.stage_definitions || [];
-      } else {
-        stageDefinitions = [];
-      }
+      selectedTaskEvents = eventsData;
+      stageDefinitions = cfg.stage_definitions || [];
       renderTaskSummary();
       if (isExecuting && selectedTask) {
         const stages = stageDefinitions.length ? stageDefinitions : DEFAULT_STAGES;
@@ -582,6 +574,7 @@
         return;
       }
       result.innerHTML = `已创建任务 <strong>${escapeHtml(data.task_id)}</strong>。你可以继续在这里执行，也可以直接进入详情页。`;
+      api.invalidate('/tasks');
       await loadTasks();
       setTask(data.task_id);
       document.getElementById('spec').value = '';
@@ -600,7 +593,7 @@
       document.getElementById('runBtn').disabled = true;
       document.getElementById('runHint').textContent = `任务 ${id} 正在执行，请稍候...`;
       if (livePollTimer) clearInterval(livePollTimer);
-      livePollTimer = setInterval(loadSelectedTaskContext, 700);
+      livePollTimer = setInterval(loadSelectedTaskContext, 1500);
       try {
         const resp = await fetch(`/tasks/${encodeURIComponent(id)}/step`, { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
@@ -619,6 +612,7 @@
           clearInterval(livePollTimer);
           livePollTimer = null;
         }
+        api.invalidate('/tasks');
         await loadTasks();
         await loadSelectedTaskContext();
       }
@@ -641,6 +635,7 @@
         clearInterval(livePollTimer);
         livePollTimer = null;
       }
+      api.invalidate('/tasks');
       await loadTasks();
       await loadSelectedTaskContext();
     }
@@ -656,6 +651,7 @@
       if (selectedTaskId === taskId) {
         selectedTaskId = '';
       }
+      api.invalidate('/tasks');
       await loadTasks();
       await loadSelectedTaskContext();
     }
@@ -667,16 +663,17 @@
     }
 
     async function refreshPage() {
-      await loadProviders();
-      await loadTasks();
+      await Promise.all([loadProviders(), loadTasks()]);
       await loadSelectedTaskContext();
     }
 
     refreshPage();
-    setInterval(loadTasks, 5000);
     setInterval(() => {
-      if (!isExecuting && selectedTaskId) loadSelectedTaskContext();
-    }, 2500);
+      if (!document.hidden) loadTasks();
+    }, 15000);
+    setInterval(() => {
+      if (!document.hidden && !isExecuting && selectedTaskId) loadSelectedTaskContext();
+    }, 6000);
   </script>
 </body>
 </html>

@@ -1,10 +1,10 @@
-from orchestration.capability_adapters import build_adapter_manifest
-from orchestration.capability_protocol import (
+from orchestration.capabilities.adapters import build_adapter_manifest
+from orchestration.capabilities.protocol import (
     PROTOCOL_VERSION,
     build_invocation_request,
     build_invocation_spec,
 )
-from orchestration.capability_registry import capability_prompt_view, merge_capability_settings
+from orchestration.capabilities.registry import capability_prompt_view, merge_capability_settings
 
 
 def test_build_invocation_spec_keeps_contract_and_binding_details():

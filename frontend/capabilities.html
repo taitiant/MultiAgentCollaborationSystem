@@ -6,8 +6,6 @@
   <title>能力执行 - MACS</title>
   <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
-
     .manage-layout {
       display: grid;
       grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(280px, 340px);
@@ -179,6 +177,18 @@
       color: #24507a;
       font-size: 12px;
       font-weight: 600;
+    }
+    .source-chip {
+      background: #f3f6ea;
+      color: #536b2d;
+    }
+    .source-chip.skill {
+      background: #eef4ff;
+      color: #2a5689;
+    }
+    .source-chip.custom {
+      background: #fff4e8;
+      color: #8a5822;
     }
 
     .toggle-row {
@@ -416,9 +426,10 @@
 
   <script src="/app-shell.js?v=20260326b"></script>
   <script>
-    let capabilityState = { catalog: [], bindings: [], default_catalog: [] };
+    let capabilityState = { catalog: [], bindings: [], default_catalog: [], deleted_catalog_ids: [] };
     let mcpServerState = { mcpServers: {} };
     let overview = { models: [] };
+    let skillState = { catalog: [] };
     let selectedCapabilityId = '';
 
     const EXECUTION_MODES = [
@@ -440,6 +451,11 @@
       delivery: '交付',
       documents: '文档',
       general: '通用',
+    };
+    const SOURCE_LABELS = {
+      builtin: '系统内置',
+      skill_mapped: 'Skill 映射',
+      custom: '用户自建',
     };
 
     function escapeHtml(text) {
@@ -636,6 +652,48 @@
       return (capabilityState.default_catalog || []).find((item) => item.id === capabilityId) || null;
     }
 
+    function hasCapabilityDeleteTombstone(capabilityId) {
+      return Array.isArray(capabilityState.deleted_catalog_ids) && capabilityState.deleted_catalog_ids.includes(capabilityId);
+    }
+
+    function markCapabilityDeleted(capabilityId) {
+      const next = new Set(Array.isArray(capabilityState.deleted_catalog_ids) ? capabilityState.deleted_catalog_ids : []);
+      next.add(capabilityId);
+      capabilityState.deleted_catalog_ids = Array.from(next);
+    }
+
+    function unmarkCapabilityDeleted(capabilityId) {
+      capabilityState.deleted_catalog_ids = (capabilityState.deleted_catalog_ids || []).filter((item) => item !== capabilityId);
+    }
+
+    function capabilitySkillRefs(capabilityId) {
+      const refs = [];
+      for (const skill of (skillState.catalog || [])) {
+        if (!skill || !skill.id) continue;
+        const preferred = Array.isArray(skill.preferred_capabilities) ? skill.preferred_capabilities : [];
+        const required = Array.isArray(skill.required_capabilities) ? skill.required_capabilities : [];
+        if (preferred.includes(capabilityId) || required.includes(capabilityId)) {
+          refs.push(skill.label || skill.id);
+        }
+      }
+      return refs;
+    }
+
+    function capabilitySource(item) {
+      return String((item || {}).source || 'custom');
+    }
+
+    function sourceChipClass(item) {
+      const source = capabilitySource(item);
+      if (source === 'skill_mapped') return 'source-chip skill';
+      if (source === 'custom') return 'source-chip custom';
+      return 'source-chip';
+    }
+
+    function canDeleteCapability(item) {
+      return capabilitySource(item) !== 'builtin';
+    }
+
     function getPrimaryBinding(capabilityId) {
       const bindings = Array.isArray(capabilityState.bindings) ? capabilityState.bindings : [];
       const exact = bindings.find((item) => item && item.id === primaryBindingId(capabilityId));
@@ -752,6 +810,7 @@
                 <button type="button" class="cap-item-main" onclick="selectCapability('${escapeHtml(item.id)}')">
                   <div class="name">
                     <span>${escapeHtml(item.label || item.id)}</span>
+                    <span class="cap-chip ${sourceChipClass(item)}">${escapeHtml(SOURCE_LABELS[capabilitySource(item)] || capabilitySource(item))}</span>
                   </div>
                   <div class="meta">${escapeHtml(item.id)}</div>
                 </button>
@@ -809,6 +868,7 @@
             <div class="editor-desc">${escapeHtml(capability.description || '暂无说明')}</div>
             <div class="chip-row">
               <span class="cap-chip">${escapeHtml(capability.id)}</span>
+              <span class="cap-chip ${sourceChipClass(capability)}">${escapeHtml(SOURCE_LABELS[capabilitySource(capability)] || capabilitySource(capability))}</span>
               <span class="cap-chip">category: ${escapeHtml(capability.category || 'general')}</span>
               ${requiredKind ? `<span class="cap-chip">model_kind: ${escapeHtml(requiredKind)}</span>` : ''}
             </div>
@@ -957,7 +1017,7 @@
               <div class="full binding-mcp">
                 <label for="mcp-server-name-${sid}">MCP 服务名</label>
                 <input id="mcp-server-name-${sid}" value="${escapeHtml(mcp.server_name || '')}" placeholder="如 docx-mcp / filesystem / playwright" />
-                <div class="field-note">如果这里填写的服务名存在于右侧 `MCP Servers` JSON 中，系统会自动补全 command / args / env / url。</div>
+                <div class="field-note">如果这里填写的服务名存在于右侧 MCP Servers JSON 中，系统会自动补全 command / args / env / url。</div>
               </div>
 
               <div class="binding-mcp">
@@ -1020,6 +1080,7 @@
         </div>
 
         <div class="actions" style="margin-top:16px;">
+          <button type="button" class="secondary" onclick="deleteSelectedCapability()" ${canDeleteCapability(capability) ? '' : 'disabled'}>${canDeleteCapability(capability) ? '删除当前能力' : '系统内置能力不可删除'}</button>
           <button type="button" class="secondary" onclick="restoreSelectedCapability()">恢复默认配置</button>
           <button type="button" onclick="saveCapabilities()">保存全部配置</button>
         </div>
@@ -1148,10 +1209,40 @@
         return;
       }
       capabilityState.catalog = capabilityState.catalog.map((item) => item.id === capability.id ? JSON.parse(JSON.stringify(defaultItem)) : item);
+      unmarkCapabilityDeleted(capability.id);
       capabilityState.bindings = (capabilityState.bindings || []).filter((item) => item && item.id !== primaryBindingId(capability.id));
       updateSnapshot();
       renderCapabilityList();
       renderCapabilityEditor();
+    }
+
+    async function deleteSelectedCapability() {
+      persistCurrentEditor();
+      const capability = selectedCapability();
+      if (!capability) return;
+      if (!canDeleteCapability(capability)) {
+        alert('系统内置能力不可删除。');
+        return;
+      }
+      const refs = capabilitySkillRefs(capability.id);
+      const warning = refs.length
+        ? `\n\n当前还有这些 Skill 在引用它：\n- ${refs.join('\n- ')}\n\n删除后这些 Skill 的 capability 引用不会自动清理。`
+        : '';
+      const confirmed = window.confirm(`确认删除能力“${capability.label || capability.id}”吗？这会同时移除它的主绑定。${warning}`);
+      if (!confirmed) return;
+
+      capabilityState.catalog = (capabilityState.catalog || []).filter((item) => item && item.id !== capability.id);
+      capabilityState.bindings = (capabilityState.bindings || []).filter((item) => item && item.capability_id !== capability.id && item.id !== primaryBindingId(capability.id));
+      if (defaultCapability(capability.id) || refs.length) {
+        markCapabilityDeleted(capability.id);
+      } else {
+        unmarkCapabilityDeleted(capability.id);
+      }
+      ensureSelectedCapability();
+      updateSnapshot();
+      renderCapabilityList();
+      renderCapabilityEditor();
+      await saveCapabilities();
     }
 
     async function saveCapabilities() {
@@ -1161,6 +1252,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            deleted_catalog_ids: capabilityState.deleted_catalog_ids || [],
             catalog: capabilityState.catalog,
             bindings: capabilityState.bindings,
           }),
@@ -1204,14 +1296,23 @@
     }
 
     async function loadAll() {
-      const [capResp, overviewResp, mcpResp] = await Promise.all([
+      const [capResp, overviewResp, mcpResp] = await Promise.allSettled([
         fetch('/capabilities'),
         fetch('/ai-registry/overview'),
         fetch('/mcp-servers'),
       ]);
-      capabilityState = await capResp.json();
-      overview = await overviewResp.json();
-      mcpServerState = await mcpResp.json();
+      if (capResp.status !== 'fulfilled') {
+        throw new Error('加载能力配置失败');
+      }
+      capabilityState = await capResp.value.json();
+      overview = overviewResp.status === 'fulfilled' ? await overviewResp.value.json() : { models: [] };
+      mcpServerState = mcpResp.status === 'fulfilled' ? await mcpResp.value.json() : { mcpServers: {} };
+      try {
+        const skillResp = await fetch('/skills');
+        skillState = await skillResp.json();
+      } catch (_error) {
+        skillState = { catalog: [] };
+      }
       ensureSelectedCapability();
       updateSnapshot();
       renderMcpServers();

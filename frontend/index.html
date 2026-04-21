@@ -6,8 +6,6 @@
   <title>主页 - MACS</title>
   <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
-
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(320px, 1.08fr) minmax(300px, 0.92fr);
@@ -238,6 +236,7 @@
     let tasks = [];
     let overview = { credentials: [], models: [], stage_bindings: {}, stages: [], execution_profiles: [] };
     let capabilityState = { vector_model: '', rerank_model: '', notes: '', bindings: [] };
+    const api = window.MacsApi;
 
     function escapeHtml(text) {
       return String(text || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -317,13 +316,13 @@
 
     async function fetchAll() {
       const [tasksResp, overviewResp, capabilityResp] = await Promise.all([
-        fetch('/tasks'),
-        fetch('/ai-registry/overview'),
-        fetch('/capabilities'),
+        api.fetchJson('/tasks'),
+        api.cachedJson('/ai-registry/overview', { ttlMs: 30000 }),
+        api.cachedJson('/capabilities', { ttlMs: 30000 }),
       ]);
-      tasks = await tasksResp.json();
-      overview = await overviewResp.json();
-      capabilityState = await capabilityResp.json();
+      tasks = tasksResp;
+      overview = overviewResp;
+      capabilityState = capabilityResp;
     }
 
     async function refreshDashboard() {
@@ -353,12 +352,15 @@
         return;
       }
       result.innerHTML = `已创建任务 <strong>${escapeHtml(data.task_id)}</strong>，准备跳转到详情页。`;
+      api.invalidate('/tasks');
       await refreshDashboard();
       window.location.href = `/task.html?task_id=${encodeURIComponent(data.task_id)}`;
     }
 
     refreshDashboard();
-    setInterval(refreshDashboard, 8000);
+    setInterval(() => {
+      if (!document.hidden) refreshDashboard();
+    }, 20000);
   </script>
 </body>
 </html>

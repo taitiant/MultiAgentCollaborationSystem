@@ -76,3 +76,32 @@ def test_set_capabilities_updates_knowledge_fields_without_overwriting_bindings(
     assert result["bindings"][0]["binding_type"] == "internal_tool"
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["bindings"][0]["tool"]["command"] == "python scripts/export_doc.py"
+
+
+def test_set_capabilities_preserves_builtin_capability_even_with_deleted_catalog_ids(tmp_path, monkeypatch):
+    config_path = tmp_path / "capabilities.json"
+    monkeypatch.setattr(app_module, "CAPA_CONFIG_PATH", str(config_path))
+    app_module.CAPA_CONFIG.clear()
+    app_module.CAPA_CONFIG.update(
+        {
+            "vector_model": "",
+            "rerank_model": "",
+            "notes": "",
+            "deleted_catalog_ids": [],
+            "catalog": [],
+            "bindings": [],
+        }
+    )
+
+    result = app_module.set_capabilities(
+        {
+            "deleted_catalog_ids": ["asset.generate:v1"],
+            "catalog": [],
+            "bindings": [],
+        }
+    )
+
+    assert "asset.generate:v1" in [item["id"] for item in result["catalog"]]
+    assert "asset.generate:v1" in result["deleted_catalog_ids"]
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["deleted_catalog_ids"] == ["asset.generate:v1"]

@@ -1,3 +1,5 @@
+"""需求、架构与交付文档的校验规则与规范化处理工具。"""
+
 from __future__ import annotations
 
 import os

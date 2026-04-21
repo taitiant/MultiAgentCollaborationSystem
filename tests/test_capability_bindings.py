@@ -1,9 +1,9 @@
-from orchestration.capability_bindings import (
+from orchestration.capabilities.bindings import (
     get_capability_bindings_for_capability,
     merge_capability_bindings,
     resolve_capability_binding,
 )
-from orchestration.capability_registry import merge_capability_settings
+from orchestration.capabilities.registry import merge_capability_settings
 
 
 def test_merge_capability_bindings_normalizes_entries():

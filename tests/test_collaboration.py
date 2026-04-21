@@ -1,5 +1,5 @@
 from core import Task
-from orchestration import collaboration
+import orchestration.collab as collaboration
 
 
 def build_task() -> Task:

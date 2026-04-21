@@ -1,3 +1,5 @@
+"""能力契约、绑定与调用载荷相关的协议数据结构与构建器。"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

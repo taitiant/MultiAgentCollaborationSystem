@@ -1,242 +1,27 @@
+"""协作 Hub，负责线程消息、黑板更新与上下文构建。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-import re
 from typing import Any, Dict, Iterable, List, Optional
 
 import db
 from core import Task, new_event
-
-
-LOCAL_THREAD_SCOPE = "local"
-GLOBAL_THREAD_SCOPE = "global"
-ACTIONABLE_MESSAGE_TYPES = {
-    "review_feedback",
-    "rework_request",
-    "smoke_feedback",
-    "test_feedback",
-    "prerequisite_feedback",
-    "user_decision",
-}
-ACTIONABLE_ENTRY_TYPES = {
-    "rework_request",
-    "smoke_feedback",
-    "test_feedback",
-    "prerequisite_gap",
-    "stage_review",
-    "decision_memory",
-    "human_decision_request",
-    "user_decision",
-}
-TARGETED_ENTRY_TYPES = {
-    "rework_request",
-    "smoke_feedback",
-    "test_feedback",
-    "stage_review",
-    "prerequisite_gap",
-    "human_decision_request",
-    "user_decision",
-}
-REVIEW_MESSAGE_TYPES = {
-    "test_feedback",
-    "prerequisite_feedback",
-}
-REVIEW_ENTRY_TYPES = {
-    "test_feedback",
-    "prerequisite_gap",
-}
-LONG_TERM_ENTRY_TYPES = {
-    "decision_memory",
-    "stage_review",
-}
-TEST_FILE_TOKEN_RE = re.compile(r"(?P<path>(?:\.?/)?tests/(?:[\w.\-]+/)*[\w.\-]+\.py)")
-BLACKBOARD_PROGRESS_ENTRY_TYPES = {
-    "stage_delivery",
-    "stage_review",
-    "decision_memory",
-}
-BLACKBOARD_ISSUE_ENTRY_TYPES = {
-    "rework_request",
-    "smoke_feedback",
-    "test_feedback",
-    "prerequisite_gap",
-    "human_decision_request",
-}
-BLACKBOARD_SIGNAL_ENTRY_TYPES = BLACKBOARD_PROGRESS_ENTRY_TYPES | BLACKBOARD_ISSUE_ENTRY_TYPES
-
-
-def stage_conversation_id(task_id: str, stage_name: str, thread_kind: str = "stage_loop", peer_stage: str | None = None) -> str:
-    parts = [str(task_id or "").strip(), str(stage_name or "").strip(), str(thread_kind or "stage_loop").strip()]
-    if peer_stage:
-        parts.append(str(peer_stage).strip())
-    return "::".join(part for part in parts if part)
-
-
-def append_prompt_with_runtime_context(prompt: str, task: Task, stage_name: str) -> str:
-    runtime = ((task.context or {}).get("_runtime_collaboration") or {}) if isinstance(task.context, dict) else {}
-    if runtime.get("stage_name") != stage_name:
-        return prompt
-    context_text = str(runtime.get("prompt_context") or "").strip()
-    if not context_text:
-        return prompt
-    return f"{prompt.rstrip()}\n\n[阶段协作上下文]\n{context_text}\n"
-
-
-def _blackboard_entry_timestamp(entry: Dict[str, Any]) -> float:
-    try:
-        return float(entry.get("updated_at") or entry.get("created_at") or 0)
-    except Exception:
-        return 0.0
-
-
-def _blackboard_entry_content(entry: Dict[str, Any], *, max_chars: int = 220) -> str:
-    text = str(entry.get("content") or "").strip()
-    if not text:
-        text = str(entry.get("title") or entry.get("entry_key") or "").strip()
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > max_chars:
-        return text[: max_chars - 3].rstrip() + "..."
-    return text
-
-
-def _blackboard_entry_status(entry: Dict[str, Any]) -> str:
-    entry_type = str(entry.get("entry_type") or "").strip()
-    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
-    if entry_type in BLACKBOARD_ISSUE_ENTRY_TYPES:
-        return "settled" if payload.get("resolved") is True else "open"
-    if entry_type == "decision_memory":
-        return "settled" if payload.get("pass") is True else "info"
-    if entry_type == "user_decision":
-        return "settled"
-    if entry_type == "stage_review":
-        if payload.get("pass") is True:
-            return "settled"
-        if payload.get("pass") is False:
-            return "open"
-    if entry_type in BLACKBOARD_PROGRESS_ENTRY_TYPES:
-        return "progress"
-    return "info"
-
-
-def _is_settled_long_term_entry(entry: Dict[str, Any]) -> bool:
-    entry_type = str(entry.get("entry_type") or "").strip()
-    if entry_type not in LONG_TERM_ENTRY_TYPES:
-        return False
-    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
-    return payload.get("pass") is True
-
-
-def _should_include_prompt_blackboard_entry(stage_name: str, entry: Dict[str, Any]) -> bool:
-    entry_type = str(entry.get("entry_type") or "").strip()
-    if not entry_type:
-        return True
-    if _is_settled_long_term_entry(entry):
-        return False
-    if entry_type == "stage_review":
-        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
-        entry_stage = str(entry.get("stage_name") or "")
-        if payload.get("pass") is True:
-            return False
-        return entry_stage == str(stage_name or "")
-    return True
-
-
-def build_blackboard_snapshot(
-    entries: List[Dict[str, Any]],
-    *,
-    fallback_title: str = "共享黑板",
-    max_history: int = 6,
-    max_open_items: int = 3,
-) -> Dict[str, Any]:
-    normalized = [entry for entry in (entries or []) if isinstance(entry, dict) and (entry.get("content") or entry.get("title") or entry.get("entry_key"))]
-    normalized.sort(key=_blackboard_entry_timestamp, reverse=True)
-
-    latest = normalized[0] if normalized else None
-    issue_entries = [entry for entry in normalized if _blackboard_entry_status(entry) == "open"]
-    progress_entries = [entry for entry in normalized if str(entry.get("entry_type") or "").strip() in BLACKBOARD_PROGRESS_ENTRY_TYPES]
-    positive_review = next(
-        (
-            entry for entry in progress_entries
-            if str(entry.get("entry_type") or "").strip() == "stage_review"
-            and isinstance(entry.get("payload"), dict)
-            and entry.get("payload", {}).get("pass") is True
-        ),
-        None,
-    )
-    focus_entry = issue_entries[0] if issue_entries else (positive_review or (progress_entries[0] if progress_entries else latest))
-    latest_update = _blackboard_entry_content(latest or {}, max_chars=220) if latest else ""
-
-    open_items: List[str] = []
-    seen_open = set()
-    for entry in issue_entries:
-        text = _blackboard_entry_content(entry, max_chars=160)
-        if not text or text in seen_open:
-            continue
-        seen_open.add(text)
-        open_items.append(text)
-        if len(open_items) >= max_open_items:
-            break
-
-    final_entry = None
-    if not open_items:
-        final_entry = positive_review or (progress_entries[0] if progress_entries else latest)
-
-    history = [
-        {
-            "entry_id": entry.get("entry_id"),
-            "entry_key": entry.get("entry_key"),
-            "entry_type": entry.get("entry_type"),
-            "title": str(entry.get("title") or entry.get("entry_key") or "未命名事项").strip(),
-            "summary": _blackboard_entry_content(entry, max_chars=180),
-            "status": _blackboard_entry_status(entry),
-            "stage_name": entry.get("stage_name"),
-            "source_message_id": entry.get("source_message_id"),
-            "updated_at": entry.get("updated_at") or entry.get("created_at"),
-        }
-        for entry in normalized[: max(1, int(max_history or 1))]
-    ]
-
-    if open_items:
-        board_status = "open"
-    elif final_entry:
-        board_status = "settled"
-    elif latest:
-        board_status = "active"
-    else:
-        board_status = "empty"
-
-    return {
-        "title": fallback_title or "共享黑板",
-        "status": board_status,
-        "entry_count": len(normalized),
-        "updated_at": (latest or {}).get("updated_at") or (latest or {}).get("created_at"),
-        "shared_context": _blackboard_entry_content(focus_entry or {}, max_chars=240) if focus_entry else "",
-        "latest_update": latest_update,
-        "open_items": open_items,
-        "final_conclusion": _blackboard_entry_content(final_entry or {}, max_chars=240) if final_entry else "",
-        "history": history,
-    }
-
-
-def render_blackboard_snapshot_text(snapshot: Dict[str, Any]) -> str:
-    if not isinstance(snapshot, dict):
-        return ""
-    sections: List[str] = []
-    shared_context = str(snapshot.get("shared_context") or "").strip()
-    if shared_context:
-        sections.append("[当前共享结论]\n" + shared_context)
-    open_items = [str(item).strip() for item in (snapshot.get("open_items") or []) if str(item).strip()]
-    if open_items:
-        sections.append("[待处理事项]\n" + "\n".join(f"- {item}" for item in open_items))
-    else:
-        final_conclusion = str(snapshot.get("final_conclusion") or "").strip()
-        if final_conclusion:
-            sections.append("[最终结论]\n" + final_conclusion)
-    latest_update = str(snapshot.get("latest_update") or "").strip()
-    if latest_update and latest_update not in "\n\n".join(sections):
-        sections.append("[最近更新]\n" + latest_update)
-    return "\n\n".join(section for section in sections if section).strip()
+from .blackboard import (
+    ACTIONABLE_ENTRY_TYPES,
+    ACTIONABLE_MESSAGE_TYPES,
+    REVIEW_ENTRY_TYPES,
+    REVIEW_MESSAGE_TYPES,
+    TARGETED_ENTRY_TYPES,
+    TEST_FILE_TOKEN_RE,
+    blackboard_entry_status,
+    build_blackboard_snapshot,
+    is_settled_long_term_entry,
+    render_blackboard_snapshot_text,
+    should_include_prompt_blackboard_entry,
+)
+from .context import LOCAL_THREAD_SCOPE, stage_conversation_id
 
 
 @dataclass
@@ -292,8 +77,8 @@ class CollaborationHub:
                     if not low.endswith((".md", ".txt", ".json", ".py", ".html", ".js", ".ts")):
                         continue
                     try:
-                        with open(abs_uri, "r", encoding="utf-8", errors="ignore") as f:
-                            content = f.read(min(remaining, 1200)).strip()
+                        with open(abs_uri, "r", encoding="utf-8", errors="ignore") as handle:
+                            content = handle.read(min(remaining, 1200)).strip()
                     except Exception:
                         continue
                     if not content:
@@ -328,7 +113,7 @@ class CollaborationHub:
         selected: List[str] = []
         seen_stage_keys = set()
         for entry in entries:
-            if not _is_settled_long_term_entry(entry):
+            if not is_settled_long_term_entry(entry):
                 continue
             entry_stage = str(entry.get("stage_name") or "")
             stage_key = entry_stage or str(entry.get("entry_key") or "")
@@ -410,8 +195,8 @@ class CollaborationHub:
         for rel_path in referenced_paths[:2]:
             abs_path = os.path.join(workspace_root, rel_path)
             try:
-                with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
-                    snippet = f.read(max(400, budget_per_file)).strip()
+                with open(abs_path, "r", encoding="utf-8", errors="ignore") as handle:
+                    snippet = handle.read(max(400, budget_per_file)).strip()
             except Exception:
                 continue
             if not snippet:
@@ -600,7 +385,7 @@ class CollaborationHub:
                 entry_type = str(entry.get("entry_type") or "").strip()
                 if entry_type and entry_type not in ACTIONABLE_ENTRY_TYPES:
                     continue
-                if not _should_include_prompt_blackboard_entry(stage_name, entry):
+                if not should_include_prompt_blackboard_entry(stage_name, entry):
                     continue
                 line = self._format_blackboard_line(entry)
                 if not line:
@@ -618,7 +403,8 @@ class CollaborationHub:
                 section = "[全局黑板]\n" + "\n".join(board_lines)
                 section = section[:remaining]
                 if section:
-                    working_parts.append(section)
+                    workingParts = working_parts
+                    workingParts.append(section)
                     remaining -= len(section)
 
         if remaining > 0:
@@ -799,9 +585,7 @@ class CollaborationHub:
         feedback = str(review.get("feedback") or "").strip()
         next_actions = [str(item).strip() for item in (review.get("next_actions") or []) if str(item).strip()]
         risks = [str(item).strip() for item in (review.get("risks") or []) if str(item).strip()]
-        lines = [
-            f"评审结论：{'通过' if review.get('pass') else '未通过'}。",
-        ]
+        lines = [f"评审结论：{'通过' if review.get('pass') else '未通过'}。"]
         if feedback:
             lines.append(f"核心反馈：{feedback}")
         if next_actions:

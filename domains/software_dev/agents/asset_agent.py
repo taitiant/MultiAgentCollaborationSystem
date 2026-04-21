@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 from xml.sax.saxutils import escape as xml_escape
 
 from core import Task, SystemState, new_message
-from orchestration.collaboration import append_prompt_with_runtime_context
+from orchestration.collab.context import append_prompt_with_runtime_context
 
 
 VISUAL_HINT_TOKENS = (

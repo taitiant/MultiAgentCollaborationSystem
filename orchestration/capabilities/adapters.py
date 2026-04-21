@@ -1,9 +1,11 @@
+"""能力绑定适配器，用于把调用规格转换成可执行清单。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Protocol
 
-from orchestration.capability_protocol import CapabilityInvocationRequest, CapabilityInvocationSpec
+from orchestration.capabilities.protocol import CapabilityInvocationRequest, CapabilityInvocationSpec
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:

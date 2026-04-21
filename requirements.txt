@@ -5,3 +5,4 @@ requests==2.32.3
 langgraph==0.0.50
 langchain-core==0.2.12
 sqlalchemy==2.0.30
+psycopg[binary]==3.2.9

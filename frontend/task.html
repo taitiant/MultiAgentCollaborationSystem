@@ -6,8 +6,6 @@
   <title>任务详情 - MACS</title>
   <link rel="stylesheet" href="/app-shell.css?v=20260326b" />
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
-
     :root {
       --bg-a: #0f2237;
       --bg-b: #183f5f;
@@ -28,7 +26,7 @@
       margin: 0;
       min-height: 100vh;
       color: var(--ink);
-      font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+      font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
     }
 
     .shell {
@@ -2113,6 +2111,7 @@ let activeConversationGroupState = null;
 let workflowPopoverStageKey = '';
 let refreshAllInFlight = false;
 let refreshCollaborationInFlight = false;
+const api = window.MacsApi;
 let selectedHumanDecisionOption = '';
 let autoRefreshPausedUntil = 0;
 let lastTaskDataSignature = '';
@@ -2843,10 +2842,10 @@ function startFallbackPolling() {
   if (fallbackCollaborationTimer || fallbackRefreshTimer) return;
   fallbackCollaborationTimer = setInterval(() => {
     if (!document.hidden) autoRefreshCollaborationPanel();
-  }, 900);
+  }, 4000);
   fallbackRefreshTimer = setInterval(() => {
     if (!isExecuting && !document.hidden) autoRefreshAll();
-  }, 1200);
+  }, 6000);
 }
 
 function closeTaskStream() {
@@ -4612,22 +4611,31 @@ function renderConfigEditor(force = false) {
 }
 
 async function fetchTask() {
-  const tasks = await (await fetch(noCacheUrl('/tasks'), { cache: 'no-store' })).json();
+  const tasks = await api.fetchJson(noCacheUrl('/tasks'), { cache: 'no-store' });
   return tasks.find((task) => task.task_id === taskId) || null;
 }
 
 async function fetchEvents() {
   const requestedLimit = Math.max(EVENT_FETCH_STEP, Number(eventFetchLimit || EVENT_FETCH_STEP));
-  const resp = await fetch(noCacheUrl(`/events?task_id=${encodeURIComponent(taskId)}&limit=${requestedLimit + 1}`), { cache: 'no-store' });
-  const rows = await resp.json();
+  const rows = await api.fetchJson(noCacheUrl(`/events?task_id=${encodeURIComponent(taskId)}&limit=${requestedLimit + 1}`), { cache: 'no-store' });
   const list = Array.isArray(rows) ? rows : [];
   eventsHasMore = list.length > requestedLimit;
   return eventsHasMore ? list.slice(list.length - requestedLimit) : list;
 }
 
 async function fetchEventConfigs() {
-  const resp = await fetch(noCacheUrl(`/tasks/${encodeURIComponent(taskId)}/event-configs`), { cache: 'no-store' });
-  if (!resp.ok) {
+  try {
+    const data = await api.fetchJson(noCacheUrl(`/tasks/${encodeURIComponent(taskId)}/event-configs`), { cache: 'no-store' });
+    defaultModelProvider = data.default_model_provider || '';
+    rawEventConfigs = data.event_configs || {};
+    effectiveEventConfigs = data.effective_event_configs || rawEventConfigs;
+    eventDetails = data.event_details || {};
+    stageDefinitions = data.stage_definitions || [];
+    leaderPlan = data.leader_plan || {};
+    conversationGroups = data.conversation_groups || leaderPlan.conversation_groups || [];
+    ensureSelectedStage();
+    return effectiveEventConfigs;
+  } catch (_error) {
     rawEventConfigs = {};
     effectiveEventConfigs = {};
     defaultModelProvider = '';
@@ -4637,58 +4645,47 @@ async function fetchEventConfigs() {
     conversationGroups = [];
     return {};
   }
-  const data = await resp.json();
-  defaultModelProvider = data.default_model_provider || '';
-  rawEventConfigs = data.event_configs || {};
-  effectiveEventConfigs = data.effective_event_configs || rawEventConfigs;
-  eventDetails = data.event_details || {};
-  stageDefinitions = data.stage_definitions || [];
-  leaderPlan = data.leader_plan || {};
-  conversationGroups = data.conversation_groups || leaderPlan.conversation_groups || [];
-  ensureSelectedStage();
-  return effectiveEventConfigs;
 }
 
 async function fetchCollaboration() {
-  const resp = await fetch(noCacheUrl(`/tasks/${encodeURIComponent(taskId)}/collaboration?limit=120`), { cache: 'no-store' });
-  if (!resp.ok) {
+  try {
+    collaborationData = await api.fetchJson(noCacheUrl(`/tasks/${encodeURIComponent(taskId)}/collaboration?limit=120`), { cache: 'no-store' });
+    conversationGroups = collaborationData.conversation_groups || conversationGroups;
+    return collaborationData;
+  } catch (_error) {
     collaborationData = { messages: [], blackboard: [], group_blackboards: [] };
     conversationGroups = conversationGroups || [];
     return collaborationData;
   }
-  collaborationData = await resp.json();
-  conversationGroups = collaborationData.conversation_groups || conversationGroups;
-  return collaborationData;
 }
 
 async function fetchProviders() {
-  const resp = await fetch(noCacheUrl('/models'), { cache: 'no-store' });
-  const data = await resp.json();
+  const data = await api.cachedJson('/models', { ttlMs: 30000 });
   return data.providers || [];
 }
 
 async function fetchCapabilities() {
-  const resp = await fetch(noCacheUrl('/capabilities'), { cache: 'no-store' });
-  if (!resp.ok) {
+  try {
+    const data = await api.cachedJson('/capabilities', { ttlMs: 30000 });
+    capabilityCatalog = Array.isArray(data.catalog) ? data.catalog : [];
+    capabilityBindings = Array.isArray(data.bindings) ? data.bindings : [];
+    return data;
+  } catch (_error) {
     capabilityCatalog = [];
     capabilityBindings = [];
     return { catalog: [], bindings: [] };
   }
-  const data = await resp.json();
-  capabilityCatalog = Array.isArray(data.catalog) ? data.catalog : [];
-  capabilityBindings = Array.isArray(data.bindings) ? data.bindings : [];
-  return data;
 }
 
 async function fetchSkills() {
-  const resp = await fetch(noCacheUrl('/skills'), { cache: 'no-store' });
-  if (!resp.ok) {
+  try {
+    const data = await api.cachedJson('/skills', { ttlMs: 30000 });
+    skillCatalog = Array.isArray(data.catalog) ? data.catalog : [];
+    return data;
+  } catch (_error) {
     skillCatalog = [];
     return { catalog: [] };
   }
-  const data = await resp.json();
-  skillCatalog = Array.isArray(data.catalog) ? data.catalog : [];
-  return data;
 }
 
 async function saveEventConfig() {
@@ -4773,7 +4770,7 @@ async function rerunSelectedStage() {
   isExecuting = true;
   document.getElementById('runHint').textContent = `正在重跑阶段 ${selectedEventKey}...`;
   if (livePollTimer) clearInterval(livePollTimer);
-  livePollTimer = setInterval(autoRefreshAll, 700);
+  livePollTimer = setInterval(autoRefreshAll, 1500);
   try {
     const resp = await fetch(`/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(selectedEventKey)}/rerun`, { method: 'POST' });
     const data = await resp.json().catch(() => ({}));
@@ -4838,7 +4835,7 @@ async function runStep() {
   document.getElementById('runBtn').disabled = true;
   renderGraph();
   if (livePollTimer) clearInterval(livePollTimer);
-  livePollTimer = setInterval(autoRefreshAll, 700);
+  livePollTimer = setInterval(autoRefreshAll, 1500);
   try {
     const resp = await fetch(`/tasks/${encodeURIComponent(taskId)}/step`, { method: 'POST' });
     const data = await resp.json().catch(() => ({}));
@@ -4914,6 +4911,8 @@ async function refreshAll() {
     const nextEvents = await nextEventsPromise;
     taskData = nextTask;
     taskEvents = nextEvents;
+    // 先用任务基础信息和事件流完成首屏渲染，再补配置与协作数据。
+    commitViewUpdate();
     await Promise.all([
       fetchEventConfigs(),
       fetchCollaboration(),

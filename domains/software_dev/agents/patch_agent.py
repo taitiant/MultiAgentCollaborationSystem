@@ -10,7 +10,7 @@ from typing import Optional, List, Callable, Dict, Any
 from core import Task, SystemState, new_message
 from storage.file_store import FileStore
 from plugins.code_execution_plugin import CodeExecutionPlugin
-from orchestration.collaboration import append_prompt_with_runtime_context
+from orchestration.collab.context import append_prompt_with_runtime_context
 
 DEFAULT_CODING_PROMPT = (
     "你是编码工程师。请基于需求与架构文档，为指定文件生成内容。\n"

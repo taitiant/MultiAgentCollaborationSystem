@@ -21,7 +21,7 @@ from orchestration.graph_builder import (
     resolve_conversation_groups,
     write_leader_plan_snapshot,
 )
-from orchestration.workflow_plan import _normalize_stage_plan
+from orchestration.planning.workflow_plan import _normalize_stage_plan
 
 
 def test_build_rework_guidance_for_coding_emphasizes_alignment_and_deduplication():
@@ -375,6 +375,59 @@ def test_testing_review_fallback_accepts_web_manual_report(tmp_path, monkeypatch
     assert review["review_status"] == "fallback"
     assert review["pass"] is True
     assert "Web 静态校验" in review["feedback"]
+
+
+def test_testing_review_detects_startup_smoke_failure(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    tests_dir = workspace / "tests"
+    tests_dir.mkdir(parents=True)
+    report_path = tests_dir / "manual_test_report.md"
+    report_path.write_text(
+        "# 测试报告（自动回退）\n\n"
+        "## 自动校验\n"
+        "- 校验类型：源码编译校验\n"
+        "- 执行命令：`python -m py_compile code/main.py`\n"
+        "- 退出码：0\n"
+        "- 说明：已执行 Python 编译校验，确认基础语法可通过。\n\n"
+        "## 入口冒烟校验\n"
+        "- 执行命令：`python -c \"import importlib; importlib.import_module('code.main')\"`\n"
+        "- 退出码：1\n"
+        "- 说明：入口导入/启动链校验失败，当前不能保证 README 声明的运行方式可用。\n",
+        encoding="utf-8",
+    )
+    task = Task(
+        task_id="task-startup-smoke-fail",
+        domain="software",
+        required_capabilities=["test.run:v1"],
+        context={
+            "spec": "demo",
+            "event_configs": {
+                "game_testing": {
+                    "stage_type": "testing",
+                    "acceptance_criteria": "测试结论覆盖核心玩法和主要风险。",
+                }
+            },
+        },
+        workspace_path=str(workspace),
+    )
+    builder = GraphBuilder(str(tmp_path), ModelRegistry())
+    monkeypatch.setattr(builder, "_select_model", lambda *_args, **_kwargs: object())
+
+    review = builder._review_stage_output(
+        task,
+        "game_testing",
+        {
+            "artifacts": [
+                {"type": "test_result", "uri": "inline", "content": {"command": "python -m py_compile code/main.py", "exit_code": 0, "stdout": "", "stderr": ""}},
+                {"type": "startup_smoke_result", "uri": "inline", "content": {"command": "python -c \"import importlib; importlib.import_module('code.main')\"", "exit_code": 1, "stdout": "", "stderr": "boom"}},
+                {"type": "md", "uri": str(report_path), "mime": "text/markdown"},
+            ]
+        },
+        stage_type="testing",
+    )
+
+    assert review["pass"] is False
 
 
 def test_doc_agent_prompt_includes_quality_guardrail(tmp_path, monkeypatch):

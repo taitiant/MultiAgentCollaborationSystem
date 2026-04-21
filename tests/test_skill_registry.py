@@ -1,11 +1,11 @@
-from orchestration.skill_registry import (
+from orchestration.skills.registry import (
     build_skill_runtime_context,
     get_skill_catalog,
     merge_skill_settings,
     skill_prompt_view,
 )
-from orchestration.stage_catalog import build_stage_type_blueprints
-from orchestration.stage_catalog import (
+from orchestration.planning.stage_catalog import build_stage_type_blueprints
+from orchestration.planning.stage_catalog import (
     default_execution_profile_for_semantics,
     normalize_stage_semantics,
     resolve_stage_execution_profile,

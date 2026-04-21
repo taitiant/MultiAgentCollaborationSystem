@@ -1,3 +1,5 @@
+"""能力绑定配置的归一化与查询辅助工具。"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

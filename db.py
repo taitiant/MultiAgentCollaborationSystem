@@ -1,3 +1,5 @@
+"""SQLite 持久化层，负责保存任务、事件、协作记录与 AI 注册中心状态。"""
+
 from __future__ import annotations
 import os
 import json
@@ -24,6 +26,14 @@ _TASK_UPDATE_CONDITION = Condition(_TASK_UPDATE_LOCK)
 _TASK_UPDATE_SNAPSHOTS: Dict[str, Dict[str, Any]] = {}
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_from_timestamp(value: float | int) -> datetime:
+    return datetime.fromtimestamp(float(value), timezone.utc)
+
+
 class TaskModel(Base):
     __tablename__ = "tasks"
     task_id = Column(String, primary_key=True)
@@ -33,8 +43,8 @@ class TaskModel(Base):
     priority = Column(Integer)
     status = Column(String)
     workspace_path = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         Index("ix_tasks_status_updated_at", "status", "updated_at"),
@@ -48,7 +58,7 @@ class EventModel(Base):
     actor_id = Column(String)
     event_type = Column(String)
     payload = Column(Text)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         Index("ix_events_task_timestamp", "task_id", "timestamp"),
@@ -73,7 +83,7 @@ class ConversationMessageModel(Base):
     payload = Column(Text, nullable=False, default="{}")
     turn_index = Column(Integer, nullable=False, default=1)
     reply_to = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         Index("ix_conversation_messages_task_stage_created", "task_id", "stage_name", "created_at"),
@@ -92,8 +102,8 @@ class BlackboardEntryModel(Base):
     content = Column(Text, nullable=False, default="")
     payload = Column(Text, nullable=False, default="{}")
     source_message_id = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         Index("ix_blackboard_entries_task_created", "task_id", "created_at"),
@@ -109,8 +119,8 @@ class AiCredentialModel(Base):
     api_key_env = Column(String, nullable=True)
     api_key = Column(Text, nullable=True)
     api_key_hint = Column(String, nullable=False, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         Index("ix_ai_credentials_name", "name"),
@@ -125,8 +135,8 @@ class AiModelModel(Base):
     provider_type = Column(String, nullable=False, default="openai-compatible")
     model_kind = Column(String, nullable=False, default="llm")
     extra_config = Column(Text, nullable=False, default="{}")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         Index("ix_ai_models_credential_kind", "credential_id", "model_kind"),
@@ -138,16 +148,12 @@ class AiStageBindingModel(Base):
     __tablename__ = "ai_stage_bindings"
     stage_name = Column(String, primary_key=True)
     model_id = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now)
 
 
 def init_db():
     Base.metadata.create_all(engine)
-
-
-def _now() -> datetime:
-    return datetime.utcnow()
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -227,7 +233,7 @@ def _api_key_hint(value: str | None) -> str:
     return f"{raw[:4]}***{raw[-4:]}"
 
 
-# ---- tasks/events ----
+# ---- 任务与事件 ----
 def save_task(task_id: str, domain: str, required_caps: list, context: dict, priority: int, workspace_path: str, status: str):
     with SessionLocal() as db:
         t = TaskModel(
@@ -307,7 +313,7 @@ def log_event(event_id: str, task_id: str, actor_id: str, event_type: str, paylo
             actor_id=actor_id,
             event_type=event_type,
             payload=json.dumps(payload, ensure_ascii=False),
-            timestamp=datetime.utcfromtimestamp(timestamp),
+            timestamp=_utc_from_timestamp(timestamp),
         )
         db.add(evt)
         db.commit()
@@ -563,7 +569,7 @@ def list_blackboard_entries(task_id: str, *, stage_name: str | None = None, limi
         ]
 
 
-# ---- AI registry ----
+# ---- AI 注册中心 ----
 def list_ai_credentials() -> List[dict]:
     with SessionLocal() as db:
         rows = db.query(AiCredentialModel).order_by(desc(AiCredentialModel.updated_at), desc(AiCredentialModel.created_at)).all()
@@ -658,9 +664,12 @@ def get_ai_credential_secret(credential_id: str) -> Optional[dict]:
         }
 
 
-def list_ai_models() -> List[dict]:
+def list_ai_models(credential_id: str | None = None) -> List[dict]:
     with SessionLocal() as db:
-        rows = db.query(AiModelModel).order_by(desc(AiModelModel.updated_at), desc(AiModelModel.created_at)).all()
+        query = db.query(AiModelModel)
+        if credential_id:
+            query = query.filter(AiModelModel.credential_id == credential_id)
+        rows = query.order_by(desc(AiModelModel.updated_at), desc(AiModelModel.created_at)).all()
         creds = {r.credential_id: r for r in db.query(AiCredentialModel).all()}
         return [
             {

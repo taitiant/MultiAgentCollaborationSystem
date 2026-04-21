@@ -60,7 +60,10 @@ def test_act_emits_compile_and_report_progress_when_no_tests(tmp_path):
 
     progress_events = []
     agent = RuntimeTestAgent(
-        executor=_FakeExecutor([{"exit_code": 0, "stdout": "", "stderr": ""}]),
+        executor=_FakeExecutor([
+            {"exit_code": 0, "stdout": "", "stderr": ""},
+            {"exit_code": 0, "stdout": "", "stderr": ""},
+        ]),
         workspace_root=str(tmp_path),
         stage_name="testing",
         stage_type="testing",
@@ -137,3 +140,62 @@ def test_act_generates_web_manual_report_without_python_or_tetris_fallback(tmp_p
     assert "静态资源校验" in report_text
     assert "`index.html`" in report_text
     assert report_artifact["uri"].endswith("tests/manual_test_report.md")
+
+
+def test_act_adds_startup_smoke_result_for_python_projects_without_tests(tmp_path):
+    task_id = "task-python-startup-smoke"
+    workspace = tmp_path / task_id
+    code_dir = workspace / "code"
+    code_dir.mkdir(parents=True, exist_ok=True)
+    (code_dir / "__init__.py").write_text("", encoding="utf-8")
+    (code_dir / "main.py").write_text("from . import __init__\n", encoding="utf-8")
+
+    agent = RuntimeTestAgent(
+        executor=_FakeExecutor([
+            {"exit_code": 0, "stdout": "", "stderr": ""},
+            {"exit_code": 0, "stdout": "", "stderr": ""},
+        ]),
+        workspace_root=str(tmp_path),
+        stage_name="testing",
+        stage_type="testing",
+        progress_callback=None,
+    )
+    task = Task(
+        task_id=task_id,
+        domain="software",
+        required_capabilities=["test.run:v1"],
+        context={"spec": "demo", "event_configs": {}},
+        workspace_path=str(workspace),
+    )
+
+    result = agent.act(task, SystemState())
+
+    artifacts = result.artifacts or []
+    startup = next(artifact for artifact in artifacts if artifact.get("type") == "startup_smoke_result")
+    assert "importlib.import_module" in startup["content"]["command"]
+    report_text = (tmp_path / task_id / "tests" / "manual_test_report.md").read_text(encoding="utf-8")
+    assert "入口冒烟校验" in report_text
+    assert "退出码：0" in report_text
+
+
+def test_manual_report_marks_compile_failure_as_failure_text(tmp_path):
+    task = Task(
+        task_id="task-report-failure",
+        domain="software",
+        required_capabilities=[],
+        context={"spec": "demo"},
+        workspace_path=str(tmp_path / "workspace"),
+    )
+    agent = RuntimeTestAgent(workspace_root=str(tmp_path))
+
+    report = agent._manual_report(
+        task,
+        str(tmp_path),
+        project_stack="python",
+        source_files=[],
+        compile_result={"command": "python -m py_compile x.py", "exit_code": 1},
+        startup_result={"command": "python -c \"import x\"", "exit_code": 1},
+    )
+
+    assert "编译校验失败" in report
+    assert "入口导入/启动链校验失败" in report

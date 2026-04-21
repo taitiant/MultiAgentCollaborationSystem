@@ -1,3 +1,5 @@
+"""FastAPI 服务入口，负责把 HTTP 路由接到任务运行时与应用服务。"""
+
 from __future__ import annotations
 import asyncio
 import json
@@ -7,26 +9,27 @@ import uuid
 import urllib.request
 import urllib.error
 from typing import Any, Dict, List, Optional
-from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from core import (
     Task,
-    SystemState,
     new_event,
 )
-from adapters.model_registry import ModelRegistry
-from orchestration.capability_registry import get_default_capability_catalog, merge_capability_settings
+from orchestration.capabilities.registry import (
+    get_default_capability_catalog,
+    merge_capability_settings,
+    sync_capability_settings_with_skills,
+)
 from orchestration.graph_builder import (
-    GraphBuilder,
     init_task_workspace,
 )
-from orchestration.collaboration import CollaborationHub, build_blackboard_snapshot
-from orchestration.mcp_registry import merge_mcp_settings
-from orchestration.stage_catalog import (
+from orchestration.collab import CollaborationHub, build_blackboard_snapshot
+from orchestration.mcp.registry import merge_mcp_settings
+from orchestration.planning.stage_catalog import (
     DEFAULT_STAGE_PROMPTS,
     STAGE_TYPE_BLUEPRINTS,
     build_stage_type_blueprints,
@@ -37,31 +40,55 @@ from orchestration.stage_catalog import (
     resolve_stage_execution_profile,
     resolve_stage_semantics,
 )
-from orchestration.skill_registry import get_default_skill_catalog, merge_skill_settings
-from orchestration.workflow_plan import (
+from orchestration.skills.registry import get_default_skill_catalog, merge_skill_settings
+from orchestration.planning.workflow_plan import (
     resolve_conversation_groups,
     write_leader_plan_snapshot,
 )
-from orchestration.workspace_cleanup import cleanup_architecture_orphan_files
-from storage.file_store import FileStore
-from plugins.logging_plugin import LoggingPlugin
-from plugins.metrics_plugin import MetricsPlugin
+from orchestration.application.tasks import TaskApplicationService
+from orchestration.bootstrap.container import build_app_container
+from orchestration.planning.workspace_cleanup import cleanup_architecture_orphan_files
+from server.schemas import (
+    AiModelTestRequest,
+    AiModelTestResponse,
+    AiStageBindingsResponse,
+    CreateAiCredentialRequest,
+    CreateAiModelRequest,
+    CreateTaskRequest,
+    ModelTestRequest,
+    ProviderTestResponse,
+    SetTaskModelResponse,
+    SetTaskModelRequest,
+    SetCapabilitiesRequest,
+    SetMcpServersRequest,
+    SetSkillsRequest,
+    SimpleStatusResponse,
+    SubmitHumanDecisionRequest,
+    QuickCreateAiModelRequest,
+    TaskStatusResponse,
+    TaskWorkspaceResponse,
+    UpdateAiCredentialRequest,
+    UpdateAiModelRequest,
+    UpdateAiStageBindingsRequest,
+    UpdateTaskEventConfigRequest,
+    UpdateTaskEventConfigResponse,
+)
 import db
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-CAPA_CONFIG_PATH = os.path.join(BASE_DIR, "config", "capabilities.json")
-MCP_CONFIG_PATH = os.path.join(BASE_DIR, "config", "mcp_servers.json")
-SKILL_CONFIG_PATH = os.path.join(BASE_DIR, "config", "skills.json")
-WORKSPACE_ROOT = os.path.join(BASE_DIR, "workspace")
-WF_TPL = os.path.join(BASE_DIR, "config", "workflow_templates", "software_dev.json")
+container = build_app_container(BASE_DIR)
+CAPA_CONFIG_PATH = container.config.paths.capability_config_path
+MCP_CONFIG_PATH = container.config.paths.mcp_config_path
+SKILL_CONFIG_PATH = container.config.paths.skill_config_path
+WORKSPACE_ROOT = container.config.paths.workspace_root
+WF_TPL = container.config.paths.workflow_template_path
 
 app = FastAPI(title="MACS Runtime")
 
-with open(WF_TPL) as f:
-    WORKFLOW_TEMPLATE = json.load(f)
-WORKFLOW_STAGES = [st.get("name") for st in WORKFLOW_TEMPLATE.get("stages", [])]
-WORKFLOW_STAGE_MAP = {st.get("name"): st for st in WORKFLOW_TEMPLATE.get("stages", [])}
-EXECUTION_PROFILE_KEYS = list(STAGE_TYPE_BLUEPRINTS.keys())
+WORKFLOW_TEMPLATE = container.config.workflow_template
+WORKFLOW_STAGES = container.config.workflow_stages
+WORKFLOW_STAGE_MAP = container.config.workflow_stage_map
+EXECUTION_PROFILE_KEYS = container.config.execution_profile_keys
 BINDABLE_STAGE_TYPES = EXECUTION_PROFILE_KEYS
 STAGE_RUNTIME_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "assets": {
@@ -88,59 +115,101 @@ STAGE_RUNTIME_DEFAULTS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-storage = FileStore(base_path=WORKSPACE_ROOT)
-model_registry = ModelRegistry()
-db.init_db()
-logging_plugin = LoggingPlugin()
-metrics_plugin = MetricsPlugin()
-if os.path.exists(CAPA_CONFIG_PATH):
-    with open(CAPA_CONFIG_PATH, "r") as f:
-        CAPA_CONFIG = merge_capability_settings(json.load(f))
-else:
-    CAPA_CONFIG = merge_capability_settings()
-if os.path.exists(MCP_CONFIG_PATH):
-    with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
-        MCP_CONFIG = merge_mcp_settings(json.load(f))
-else:
-    MCP_CONFIG = merge_mcp_settings()
-if os.path.exists(SKILL_CONFIG_PATH):
-    with open(SKILL_CONFIG_PATH, "r") as f:
-        SKILL_CONFIG = merge_skill_settings(json.load(f))
-else:
-    SKILL_CONFIG = merge_skill_settings()
-graph_builder = GraphBuilder(
-    WORKSPACE_ROOT,
-    model_registry,
-    capability_settings_provider=lambda: CAPA_CONFIG,
-    skill_settings_provider=lambda: SKILL_CONFIG,
-    mcp_settings_provider=lambda: MCP_CONFIG,
-)
+storage = container.infrastructure.storage
+model_registry = container.infrastructure.model_registry
+logging_plugin = container.infrastructure.logging_plugin
+metrics_plugin = container.infrastructure.metrics_plugin
+CAPA_CONFIG = container.config.capability_config
+MCP_CONFIG = container.config.mcp_config
+SKILL_CONFIG = container.config.skill_config
+graph_builder = container.execution.graph_builder
 
-# ---- runtime state ----
-state = SystemState(tasks={}, task_status={}, history=[])
-TASK_CONTROL_LOCK = Lock()
-ABORTED_TASKS: set[str] = set()
+# ---- 运行时状态 ----
+runtime = container.execution.runtime
+state = runtime.state
 
 
 def is_task_aborted(task_id: str) -> bool:
-    with TASK_CONTROL_LOCK:
-        return task_id in ABORTED_TASKS
+    return runtime.is_task_aborted(task_id)
 
 
 def mark_task_aborted(task_id: str):
-    with TASK_CONTROL_LOCK:
-        ABORTED_TASKS.add(task_id)
+    runtime.mark_task_aborted(task_id)
 
 
 def clear_task_abort(task_id: str):
-    with TASK_CONTROL_LOCK:
-        ABORTED_TASKS.discard(task_id)
+    runtime.clear_task_abort(task_id)
+
+
+workflow_runner = container.execution.workflow_runner
+
+
+def _persist_json(path: str, payload: Dict[str, Any]):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _sync_capability_config_with_skills(persist: bool = False) -> Dict[str, Any]:
+    merged = sync_capability_settings_with_skills(CAPA_CONFIG, SKILL_CONFIG)
+    CAPA_CONFIG.clear()
+    CAPA_CONFIG.update(merged)
+    if persist:
+        _persist_json(CAPA_CONFIG_PATH, CAPA_CONFIG)
+    return merged
+
+
+def _create_task_impl(body: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = body.get("task_id") or str(uuid.uuid4())
+    required_caps = body.get("required_capabilities") or []
+    context = body.get("context") or {}
+    context.setdefault("default_model_provider", get_default_provider_id())
+    context.setdefault("event_configs", {})
+    priority = int(body.get("priority", 50))
+    domain = body.get("domain", "software")
+    workspace_path = body.get("workspace_path") or os.path.join(WORKSPACE_ROOT, task_id)
+
+    task = Task(
+        task_id=task_id,
+        domain=domain,
+        required_capabilities=required_caps,
+        context=context,
+        priority=priority,
+        workspace_path=workspace_path,
+    )
+    ensure_task_defaults(task)
+    state.tasks[task_id] = task
+    state.task_status[task_id] = "created"
+    db.save_task(task_id, domain, required_caps, task.context, priority, workspace_path, "created")
+    init_task_workspace(WORKSPACE_ROOT, task)
+    evt = new_event("user", task_id, "TaskCreated", task.__dict__)
+    _record_event(evt)
+    return {"task_id": task_id, "workspace_path": workspace_path}
+
+
+def _abort_task_impl(task_id: str) -> Dict[str, Any]:
+    mark_task_aborted(task_id)
+    runtime.set_task_status(task_id, "aborting")
+    evt = new_event("user", task_id, "TaskAbortRequested", {"task_id": task_id})
+    _record_event(evt)
+    return {"status": "aborting", "task_id": task_id}
 
 
 def _set_task_status(task_id: str, status: str) -> str:
-    state.task_status[task_id] = status
-    db.update_task_status(task_id, status)
-    return status
+    return runtime.set_task_status(task_id, status)
+
+
+def _record_event(event):
+    return runtime.record_event(event)
+
+
+def _payload_dict(body: Any) -> Dict[str, Any]:
+    # 保持路由函数在测试里也能直接接收普通 dict，而不强依赖 FastAPI 的请求解析。
+    if isinstance(body, BaseModel):
+        return body.model_dump(exclude_unset=True)
+    if isinstance(body, dict):
+        return dict(body)
+    return {}
 
 
 def _merge_presented_task_status(persisted_status: str, runtime_status: str) -> str:
@@ -150,8 +219,7 @@ def _merge_presented_task_status(persisted_status: str, runtime_status: str) -> 
         return persisted
     if runtime == persisted:
         return runtime
-    # Runtime status is most valuable for transient execution states, but should
-    # not override a fresher persisted terminal state such as "completed".
+    # 运行时状态对临时执行态最有价值，但不应覆盖数据库里更“新鲜”的终态，例如 completed。
     if runtime in {"created", "running", "aborting", "waiting_user"}:
         return runtime
     if not persisted or persisted == "unknown":
@@ -874,7 +942,7 @@ def ensure_task(task_id: str) -> Task:
 
 
 def run_step(task: Task):
-    """Execute one pass of the graph workflow for the task (sequential)."""
+    """顺序执行一次任务工作流。"""
     pending_decision = _pending_human_decision(task)
     if pending_decision:
         _set_task_status(task.task_id, "waiting_user")
@@ -902,59 +970,30 @@ def run_step(task: Task):
         "conversation_groups": (task.context.get("leader_plan", {}) or {}).get("conversation_groups", []),
     })
     if not is_task_aborted(task.task_id):
-        state.history.append(plan_evt)
-        db.log_event(plan_evt.event_id, task.task_id, plan_evt.actor_id, plan_evt.event_type, plan_evt.payload, plan_evt.timestamp)
-        logging_plugin.on_event(plan_evt, state)
-        metrics_plugin.on_event(plan_evt, state)
+        _record_event(plan_evt)
     db.update_task_context(task.task_id, task.context)
 
-    def stage_logger(stage, status, payload):
-        if is_task_aborted(task.task_id):
-            return
-        evt = new_event('graph', task.task_id, 'Stage' + status.capitalize(), {'stage': stage, **payload})
-        state.history.append(evt)
-        logging_plugin.on_event(evt, state)
-        metrics_plugin.on_event(evt, state)
-        db.log_event(evt.event_id, task.task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
-
-    graph = graph_builder.build(task, tpl, stage_logger=stage_logger, should_abort=lambda t: is_task_aborted(t.task_id))
-    init_state = {'task': task, 'artifacts': []}
     try:
-        result = graph.invoke(init_state)
-        if task.task_id not in state.tasks:
-            return {"status": "deleted", "task_id": task.task_id}
+        result = workflow_runner.invoke(task, tpl)
+        if result.get("status") == "deleted":
+            return result
         if result.get("error"):
-            evt = new_event('graph', task.task_id, 'GraphError', {'error': str(result.get("error"))})
-            state.history.append(evt)
-            logging_plugin.on_event(evt, state)
-            metrics_plugin.on_event(evt, state)
-            db.log_event(evt.event_id, task.task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
+            workflow_runner.record_graph_error(task, str(result.get("error")))
             _set_task_status(task.task_id, 'failed')
             return {'status': 'failed', 'error': str(result.get("error"))}
         if is_task_aborted(task.task_id) or result.get("abort"):
-            abort_evt = new_event('graph', task.task_id, 'GraphAbort', {'abort': result.get('abort') or {'reason': 'task_aborted'}})
-            state.history.append(abort_evt)
-            logging_plugin.on_event(abort_evt, state)
-            metrics_plugin.on_event(abort_evt, state)
-            db.log_event(abort_evt.event_id, task.task_id, abort_evt.actor_id, abort_evt.event_type, abort_evt.payload, abort_evt.timestamp)
+            workflow_runner.record_graph_abort(task, result.get('abort') or {'reason': 'task_aborted'})
             _set_task_status(task.task_id, 'aborted')
             return {'status': 'aborted', 'abort': result.get('abort')}
-        state.history.append(new_event('graph', task.task_id, 'GraphRun', {'await': result.get('await'), 'artifacts': result.get('artifacts', [])}))
-        logging_plugin.on_event(state.history[-1], state)
-        metrics_plugin.on_event(state.history[-1], state)
-        db.log_event(state.history[-1].event_id, task.task_id, state.history[-1].actor_id, state.history[-1].event_type, state.history[-1].payload, state.history[-1].timestamp)
-        db.update_task_context(task.task_id, task.context)
+        workflow_runner.record_graph_run(task, result)
+        workflow_runner.persist_context(task)
     except Exception as e:
         if task.task_id not in state.tasks:
             return {"status": "deleted", "task_id": task.task_id}
         if is_task_aborted(task.task_id):
             _set_task_status(task.task_id, 'aborted')
             return {'status': 'aborted', 'abort': {'reason': 'task_aborted', 'error': str(e)}}
-        evt = new_event('graph', task.task_id, 'GraphError', {'error': str(e)})
-        state.history.append(evt)
-        logging_plugin.on_event(evt, state)
-        metrics_plugin.on_event(evt, state)
-        db.log_event(evt.event_id, task.task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
+        workflow_runner.record_graph_error(task, str(e))
         _set_task_status(task.task_id, 'failed')
         return {'status': 'failed', 'error': str(e)}
 
@@ -1001,40 +1040,20 @@ def run_single_stage(task: Task, stage_name: str):
         "cleaned_orphans": orphan_removed,
     })
     if not is_task_aborted(task.task_id):
-        state.history.append(req_evt)
-        db.log_event(req_evt.event_id, task.task_id, req_evt.actor_id, req_evt.event_type, req_evt.payload, req_evt.timestamp)
-        logging_plugin.on_event(req_evt, state)
-        metrics_plugin.on_event(req_evt, state)
+        _record_event(req_evt)
 
-    def stage_logger(stage, status, payload):
-        if is_task_aborted(task.task_id):
-            return
-        evt = new_event('graph', task.task_id, 'Stage' + status.capitalize(), {'stage': stage, **payload})
-        state.history.append(evt)
-        logging_plugin.on_event(evt, state)
-        metrics_plugin.on_event(evt, state)
-        db.log_event(evt.event_id, task.task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
-
-    graph = graph_builder.build(task, tpl, stage_logger=stage_logger, should_abort=lambda t: is_task_aborted(t.task_id))
-    init_state = {'task': task, 'artifacts': []}
     try:
-        result = graph.invoke(init_state)
-        if task.task_id not in state.tasks:
+        result = workflow_runner.invoke(task, tpl)
+        if result.get("status") == "deleted":
             return {"status": "deleted", "stage": resolved_stage, "task_id": task.task_id}
         if result.get("error"):
             err_evt = new_event("user", task.task_id, "StageRerunError", {"stage": resolved_stage, "error": str(result.get("error"))})
-            state.history.append(err_evt)
-            db.log_event(err_evt.event_id, task.task_id, err_evt.actor_id, err_evt.event_type, err_evt.payload, err_evt.timestamp)
-            logging_plugin.on_event(err_evt, state)
-            metrics_plugin.on_event(err_evt, state)
+            _record_event(err_evt)
             _set_task_status(task.task_id, "failed")
             return {"status": "failed", "stage": resolved_stage, "error": str(result.get("error"))}
         if is_task_aborted(task.task_id) or result.get("abort"):
             abort_evt = new_event("user", task.task_id, "StageRerunAborted", {"stage": resolved_stage, "abort": result.get("abort") or {"reason": "task_aborted"}})
-            state.history.append(abort_evt)
-            db.log_event(abort_evt.event_id, task.task_id, abort_evt.actor_id, abort_evt.event_type, abort_evt.payload, abort_evt.timestamp)
-            logging_plugin.on_event(abort_evt, state)
-            metrics_plugin.on_event(abort_evt, state)
+            _record_event(abort_evt)
             _set_task_status(task.task_id, 'aborted')
             return {"status": "aborted", "stage": resolved_stage, "abort": result.get("abort")}
         stage_outcome = latest_stage_runtime_outcome(task.task_id, resolved_stage)
@@ -1045,10 +1064,7 @@ def run_single_stage(task: Task, stage_name: str):
                 "error": stage_outcome.get("payload", {}).get("error") or "",
                 "feedback": stage_outcome.get("feedback") or "",
             })
-            state.history.append(fail_evt)
-            db.log_event(fail_evt.event_id, task.task_id, fail_evt.actor_id, fail_evt.event_type, fail_evt.payload, fail_evt.timestamp)
-            logging_plugin.on_event(fail_evt, state)
-            metrics_plugin.on_event(fail_evt, state)
+            _record_event(fail_evt)
             _set_task_status(task.task_id, "failed")
             return {
                 "status": "failed",
@@ -1061,11 +1077,8 @@ def run_single_stage(task: Task, stage_name: str):
             "await": result.get("await"),
             "artifact_count": len(_latest_stage_artifacts(task.task_id, resolved_stage)),
         })
-        state.history.append(done_evt)
-        db.log_event(done_evt.event_id, task.task_id, done_evt.actor_id, done_evt.event_type, done_evt.payload, done_evt.timestamp)
-        logging_plugin.on_event(done_evt, state)
-        metrics_plugin.on_event(done_evt, state)
-        db.update_task_context(task.task_id, task.context)
+        _record_event(done_evt)
+        workflow_runner.persist_context(task)
         if result.get("await") or stage_outcome.get("status") == "waiting_user":
             _set_task_status(task.task_id, "waiting_user")
             return {"status": "await_user", "stage": resolved_stage, "await": result.get("await")}
@@ -1074,10 +1087,7 @@ def run_single_stage(task: Task, stage_name: str):
         _set_task_status(task.task_id, next_status)
     except Exception as e:
         err_evt = new_event("user", task.task_id, "StageRerunError", {"stage": resolved_stage, "error": str(e)})
-        state.history.append(err_evt)
-        db.log_event(err_evt.event_id, task.task_id, err_evt.actor_id, err_evt.event_type, err_evt.payload, err_evt.timestamp)
-        logging_plugin.on_event(err_evt, state)
-        metrics_plugin.on_event(err_evt, state)
+        _record_event(err_evt)
         _set_task_status(task.task_id, "failed")
         return {"status": "failed", "stage": resolved_stage, "error": str(e)}
 
@@ -1090,10 +1100,10 @@ def run_single_stage(task: Task, stage_name: str):
     }
 
 
-# ---- API routes ----
+# ---- API 路由 ----
 @app.get("/tasks")
 def list_tasks():
-    # prefer DB persisted tasks; fallback to in-memory
+    # 优先返回数据库持久化任务；数据库不可用时退回内存态。
     try:
         tasks = db.list_tasks()
         if tasks:
@@ -1118,80 +1128,35 @@ def list_tasks():
     ]
 
 
-@app.post("/tasks")
-def create_task(body: Dict):
+@app.post("/tasks", response_model=TaskWorkspaceResponse)
+def create_task(body: CreateTaskRequest):
     require_registered_llm_model()
-    task_id = body.get("task_id") or str(uuid.uuid4())
-    required_caps = body.get("required_capabilities") or []
-    context = body.get("context") or {}
-    context.setdefault("default_model_provider", get_default_provider_id())
-    context.setdefault("event_configs", {})
-    priority = int(body.get("priority", 50))
-    domain = body.get("domain", "software")
-    workspace_path = body.get("workspace_path") or os.path.join(WORKSPACE_ROOT, task_id)
-
-    task = Task(
-        task_id=task_id,
-        domain=domain,
-        required_capabilities=required_caps,
-        context=context,
-        priority=priority,
-        workspace_path=workspace_path,
-    )
-    ensure_task_defaults(task)
-    state.tasks[task_id] = task
-    state.task_status[task_id] = "created"
-    db.save_task(task_id, domain, required_caps, task.context, priority, workspace_path, "created")
-    init_task_workspace(WORKSPACE_ROOT, task)
-    evt = new_event("user", task_id, "TaskCreated", task.__dict__)
-    state.history.append(evt)
-    db.log_event(evt.event_id, task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
-    logging_plugin.on_event(evt, state)
-    metrics_plugin.on_event(evt, state)
-    return {"task_id": task_id, "workspace_path": workspace_path}
+    return task_app_service.create_task(_payload_dict(body))
 
 
-@app.post("/tasks/{task_id}/step")
+@app.post("/tasks/{task_id}/step", response_model=TaskStatusResponse)
 def step_task(task_id: str):
     require_registered_llm_model()
-    task = ensure_task(task_id)
-    result = run_step(task)
-    return result
+    return task_app_service.step_task(task_id)
 
 
-@app.post("/tasks/{task_id}/stages/{stage_name}/rerun")
+@app.post("/tasks/{task_id}/stages/{stage_name}/rerun", response_model=TaskStatusResponse)
 def rerun_stage(task_id: str, stage_name: str):
     require_registered_llm_model()
-    task = ensure_task(task_id)
-    return run_single_stage(task, stage_name)
+    return task_app_service.rerun_stage(task_id, stage_name)
 
 
-@app.post("/tasks/{task_id}/abort")
+@app.post("/tasks/{task_id}/abort", response_model=TaskStatusResponse)
 def abort_task(task_id: str):
-    task = ensure_task(task_id)
-    mark_task_aborted(task_id)
-    state.task_status[task_id] = "aborting"
-    db.update_task_status(task_id, "aborting")
-    evt = new_event("user", task_id, "TaskAbortRequested", {"task_id": task_id})
-    state.history.append(evt)
-    db.log_event(evt.event_id, task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
-    logging_plugin.on_event(evt, state)
-    metrics_plugin.on_event(evt, state)
-    return {"status": "aborting", "task_id": task_id}
+    return task_app_service.abort_task(task_id)
 
 
-@app.delete("/tasks/{task_id}")
+@app.delete("/tasks/{task_id}", response_model=TaskStatusResponse)
 def delete_task(task_id: str, purge_workspace: bool = True):
     task = ensure_task(task_id)
-    mark_task_aborted(task_id)
+    runtime.drop_task(task_id)
     workspace_path = task.workspace_path
     db.delete_task(task_id)
-
-    if task_id in state.tasks:
-        del state.tasks[task_id]
-    if task_id in state.task_status:
-        del state.task_status[task_id]
-    state.history = [e for e in state.history if e.task_id != task_id]
 
     removed_workspace = False
     if purge_workspace and workspace_path and os.path.exists(workspace_path):
@@ -1200,11 +1165,12 @@ def delete_task(task_id: str, purge_workspace: bool = True):
     return {"status": "ok", "task_id": task_id, "workspace_removed": removed_workspace}
 
 
-@app.post("/tasks/{task_id}/model")
-def set_task_model(task_id: str, body: Dict):
+@app.post("/tasks/{task_id}/model", response_model=SetTaskModelResponse)
+def set_task_model(task_id: str, body: SetTaskModelRequest):
     require_registered_llm_model()
     task = ensure_task(task_id)
-    provider = body.get("model_provider")
+    payload = _payload_dict(body)
+    provider = payload.get("model_provider")
     if provider and not provider_exists(provider):
         raise HTTPException(status_code=400, detail="provider not found")
     task.context["default_model_provider"] = provider
@@ -1212,9 +1178,7 @@ def set_task_model(task_id: str, body: Dict):
     ensure_task_defaults(task)
     db.update_task_context(task.task_id, task.context)
     evt = new_event("user", task_id, "TaskModelUpdated", {"model_provider": provider})
-    state.history.append(evt)
-    logging_plugin.on_event(evt, state)
-    metrics_plugin.on_event(evt, state)
+    _record_event(evt)
     return {"status": "ok", "model_provider": provider}
 
 
@@ -1270,8 +1234,7 @@ def get_task_collaboration(task_id: str, stage_name: Optional[str] = None, conve
     }
 
 
-@app.post("/tasks/{task_id}/human-decisions")
-def submit_human_decision(task_id: str, body: Dict[str, Any]):
+def _submit_human_decision_impl(task_id: str, body: Dict[str, Any]):
     task = ensure_task(task_id)
     pending = _pending_human_decision(task)
     if not pending:
@@ -1378,12 +1341,24 @@ def submit_human_decision(task_id: str, body: Dict[str, Any]):
         "selected_option": selected_option,
         "decision": decision_text,
     })
-    state.history.append(evt)
-    db.log_event(evt.event_id, task.task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
-    logging_plugin.on_event(evt, state)
-    metrics_plugin.on_event(evt, state)
+    _record_event(evt)
     _set_task_status(task.task_id, "created")
     return {"status": "ok", "stage": stage_name, "message": "人工决策已记录，请继续执行 Step"}
+
+
+task_app_service = TaskApplicationService(
+    create_task_fn=_create_task_impl,
+    run_step_fn=run_step,
+    run_single_stage_fn=run_single_stage,
+    abort_task_fn=_abort_task_impl,
+    submit_human_decision_fn=_submit_human_decision_impl,
+    ensure_task_fn=ensure_task,
+)
+
+
+@app.post("/tasks/{task_id}/human-decisions", response_model=TaskStatusResponse)
+def submit_human_decision(task_id: str, body: SubmitHumanDecisionRequest):
+    return task_app_service.submit_human_decision(task_id, _payload_dict(body))
 
 
 @app.get("/tasks/{task_id}/conversations")
@@ -1398,10 +1373,11 @@ def get_task_blackboard(task_id: str, stage_name: Optional[str] = None, limit: i
     return db.list_blackboard_entries(task_id, stage_name=stage_name, limit=limit)
 
 
-@app.put("/tasks/{task_id}/event-configs/{event_name}")
-def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]):
+@app.put("/tasks/{task_id}/event-configs/{event_name}", response_model=UpdateTaskEventConfigResponse)
+def update_task_event_config(task_id: str, event_name: str, body: UpdateTaskEventConfigRequest):
     require_registered_llm_model()
     task = ensure_task(task_id)
+    payload = _payload_dict(body)
     allowed_names = set(task_stage_sequence(task)) | set(EXECUTION_PROFILE_KEYS)
     target_name = resolve_task_stage_name(task, event_name)
     if target_name not in allowed_names and event_name not in allowed_names:
@@ -1409,7 +1385,7 @@ def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]
     if target_name not in allowed_names:
         target_name = event_name
 
-    model_provider = body.get("model_provider")
+    model_provider = payload.get("model_provider")
     if model_provider and not provider_exists(model_provider):
         raise HTTPException(status_code=400, detail="provider not found")
 
@@ -1434,8 +1410,8 @@ def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]
         "auto_smoke_fix_limit", "auto_rework_limit", "review_blocking", "smoke_test_blocking",
         "rework_cleanup", "targeted_rework_enabled", "acceptance_criteria", "planned_role",
     ]:
-        if key in body:
-            next_cfg[key] = body.get(key)
+        if key in payload:
+            next_cfg[key] = payload.get(key)
 
     next_cfg["stage_type"] = stage_type
     next_cfg["execution_profile"] = stage_type
@@ -1448,10 +1424,7 @@ def update_task_event_config(task_id: str, event_name: str, body: Dict[str, Any]
     db.update_task_context(task.task_id, task.context)
 
     evt = new_event("user", task_id, "TaskEventConfigUpdated", {"event": target_name, "stage_type": stage_type, "execution_profile": stage_type, "stage_semantics": stage_semantics, "config": compact_cfg})
-    state.history.append(evt)
-    db.log_event(evt.event_id, task_id, evt.actor_id, evt.event_type, evt.payload, evt.timestamp)
-    logging_plugin.on_event(evt, state)
-    metrics_plugin.on_event(evt, state)
+    _record_event(evt)
     return {"status": "ok", "event": target_name, "stage_type": stage_type, "execution_profile": stage_type, "stage_semantics": stage_semantics, "config": compact_cfg}
 
 
@@ -1511,10 +1484,11 @@ def list_models():
     }
 
 
-@app.post("/models/test")
-def test_model(body: Dict):
-    provider_id = body.get("provider_id")
-    prompt = body.get("prompt", "hello")
+@app.post("/models/test", response_model=ProviderTestResponse)
+def test_model(body: ModelTestRequest):
+    payload = _payload_dict(body)
+    provider_id = payload.get("provider_id")
+    prompt = payload.get("prompt", "hello")
     if not provider_id:
         raise HTTPException(status_code=400, detail="provider_id required")
     try:
@@ -1541,27 +1515,33 @@ def ai_registry_overview():
     }
 
 
+@app.get("/ai-registry/credentials")
+def get_ai_credentials():
+    return {"credentials": db.list_ai_credentials()}
+
+
 @app.post("/ai-registry/credentials")
-def create_ai_credential(body: Dict[str, Any]):
-    name = str(body.get("name") or "").strip()
-    base_url = str(body.get("base_url") or "").strip()
+def create_ai_credential(body: CreateAiCredentialRequest):
+    payload = _payload_dict(body)
+    name = str(payload.get("name") or "").strip()
+    base_url = str(payload.get("base_url") or "").strip()
     if not name or not base_url:
         raise HTTPException(status_code=400, detail="name and base_url required")
     try:
-        return db.create_ai_credential(name=name, base_url=base_url, api_key_env=body.get("api_key_env"), api_key=body.get("api_key"))
+        return db.create_ai_credential(name=name, base_url=base_url, api_key_env=payload.get("api_key_env"), api_key=payload.get("api_key"))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.put("/ai-registry/credentials/{credential_id}")
-def update_ai_credential(credential_id: str, body: Dict[str, Any]):
-    row = db.update_ai_credential(credential_id, body)
+def update_ai_credential(credential_id: str, body: UpdateAiCredentialRequest):
+    row = db.update_ai_credential(credential_id, _payload_dict(body))
     if not row:
         raise HTTPException(status_code=404, detail="credential not found")
     return row
 
 
-@app.delete("/ai-registry/credentials/{credential_id}")
+@app.delete("/ai-registry/credentials/{credential_id}", response_model=SimpleStatusResponse)
 def delete_ai_credential(credential_id: str):
     try:
         ok = db.delete_ai_credential(credential_id)
@@ -1595,54 +1575,61 @@ def test_ai_credential(credential_id: str):
 
 
 @app.post("/ai-registry/credentials/{credential_id}/models")
-def quick_create_ai_model(credential_id: str, body: Dict[str, Any]):
-    name = str(body.get("name") or "").strip()
+def quick_create_ai_model(credential_id: str, body: QuickCreateAiModelRequest):
+    payload = _payload_dict(body)
+    name = str(payload.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="model name required")
     cred = db.get_ai_credential_secret(credential_id)
     if not cred:
         raise HTTPException(status_code=404, detail="credential not found")
-    provider_type = str(body.get("provider_type") or infer_provider_type(cred.get("base_url") or "", name)).strip()
-    model_kind = str(body.get("model_kind") or "llm").strip() or "llm"
+    provider_type = str(payload.get("provider_type") or infer_provider_type(cred.get("base_url") or "", name)).strip()
+    model_kind = str(payload.get("model_kind") or "llm").strip() or "llm"
     try:
         return db.create_ai_model(
             credential_id=credential_id,
             name=name,
             provider_type=provider_type,
             model_kind=model_kind,
-            extra_config=body.get("extra_config") if isinstance(body.get("extra_config"), dict) else {},
+            extra_config=payload.get("extra_config") if isinstance(payload.get("extra_config"), dict) else {},
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.get("/ai-registry/models")
+def get_ai_models(credential_id: Optional[str] = None):
+    return {"models": db.list_ai_models(credential_id=credential_id)}
+
+
 @app.post("/ai-registry/models")
-def create_ai_model(body: Dict[str, Any]):
-    credential_id = str(body.get("credential_id") or "").strip()
-    name = str(body.get("name") or "").strip()
+def create_ai_model(body: CreateAiModelRequest):
+    payload = _payload_dict(body)
+    credential_id = str(payload.get("credential_id") or "").strip()
+    name = str(payload.get("name") or "").strip()
     if not credential_id or not name:
         raise HTTPException(status_code=400, detail="credential_id and name required")
     try:
         return db.create_ai_model(
             credential_id=credential_id,
             name=name,
-            provider_type=str(body.get("provider_type") or "openai-compatible"),
-            model_kind=str(body.get("model_kind") or "llm"),
-            extra_config=body.get("extra_config") if isinstance(body.get("extra_config"), dict) else {},
+            provider_type=str(payload.get("provider_type") or "openai-compatible"),
+            model_kind=str(payload.get("model_kind") or "llm"),
+            extra_config=payload.get("extra_config") if isinstance(payload.get("extra_config"), dict) else {},
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.put("/ai-registry/models/{model_id}")
-def update_ai_model(model_id: str, body: Dict[str, Any]):
-    row = db.update_ai_model(model_id, body)
+def update_ai_model(model_id: str, body: UpdateAiModelRequest):
+    row = db.update_ai_model(model_id, _payload_dict(body))
     if not row:
         raise HTTPException(status_code=404, detail="model not found")
     return row
 
 
-@app.delete("/ai-registry/models/{model_id}")
+@app.delete("/ai-registry/models/{model_id}", response_model=SimpleStatusResponse)
 def delete_ai_model(model_id: str):
     try:
         ok = db.delete_ai_model(model_id)
@@ -1653,9 +1640,9 @@ def delete_ai_model(model_id: str):
     return {"status": "ok"}
 
 
-@app.post("/ai-registry/models/{model_id}/test")
-def test_ai_model(model_id: str, body: Optional[Dict[str, Any]] = None):
-    prompt = str((body or {}).get("prompt") or "ping").strip() or "ping"
+@app.post("/ai-registry/models/{model_id}/test", response_model=AiModelTestResponse)
+def test_ai_model(model_id: str, body: Optional[AiModelTestRequest] = None):
+    prompt = str(_payload_dict(body).get("prompt") or "ping").strip() or "ping"
     cfg = get_registry_provider_config(make_registry_provider_id(model_id))
     if not cfg:
         raise HTTPException(status_code=404, detail="model not found")
@@ -1665,14 +1652,15 @@ def test_ai_model(model_id: str, body: Optional[Dict[str, Any]] = None):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@app.get("/ai-registry/stage-bindings")
+@app.get("/ai-registry/stage-bindings", response_model=AiStageBindingsResponse)
 def get_ai_stage_bindings():
     return {"bindings": db.get_stage_bindings(), "stages": EXECUTION_PROFILE_KEYS, "execution_profiles": EXECUTION_PROFILE_KEYS}
 
 
-@app.put("/ai-registry/stage-bindings")
-def update_ai_stage_bindings(body: Dict[str, Any]):
-    bindings = body.get("bindings") if isinstance(body.get("bindings"), dict) else {}
+@app.put("/ai-registry/stage-bindings", response_model=AiStageBindingsResponse)
+def update_ai_stage_bindings(body: UpdateAiStageBindingsRequest):
+    payload = _payload_dict(body)
+    bindings = payload.get("bindings") if isinstance(payload.get("bindings"), dict) else {}
     for stage in EXECUTION_PROFILE_KEYS:
         if stage in bindings:
             model_id = bindings.get(stage) or None
@@ -1684,27 +1672,29 @@ def update_ai_stage_bindings(body: Dict[str, Any]):
 
 @app.get("/capabilities")
 def get_capabilities():
+    _sync_capability_config_with_skills()
     return {**CAPA_CONFIG, "default_catalog": get_default_capability_catalog()}
 
 
 @app.post("/capabilities")
-def set_capabilities(body: Dict):
+def set_capabilities(body: SetCapabilitiesRequest):
+    payload = _payload_dict(body)
     next_state = dict(CAPA_CONFIG)
     next_state.update({
-        "vector_model": body.get("vector_model", CAPA_CONFIG.get("vector_model", "")),
-        "rerank_model": body.get("rerank_model", CAPA_CONFIG.get("rerank_model", "")),
-        "notes": body.get("notes", CAPA_CONFIG.get("notes", "")),
+        "vector_model": payload.get("vector_model", CAPA_CONFIG.get("vector_model", "")),
+        "rerank_model": payload.get("rerank_model", CAPA_CONFIG.get("rerank_model", "")),
+        "notes": payload.get("notes", CAPA_CONFIG.get("notes", "")),
+        "deleted_catalog_ids": payload.get("deleted_catalog_ids", CAPA_CONFIG.get("deleted_catalog_ids", [])),
     })
-    if isinstance(body.get("catalog"), list):
-        next_state["catalog"] = body.get("catalog")
-    if isinstance(body.get("bindings"), list):
-        next_state["bindings"] = body.get("bindings")
+    if isinstance(payload.get("catalog"), list):
+        next_state["catalog"] = payload.get("catalog")
+    if isinstance(payload.get("bindings"), list):
+        next_state["bindings"] = payload.get("bindings")
     merged = merge_capability_settings(next_state)
     CAPA_CONFIG.clear()
     CAPA_CONFIG.update(merged)
-    os.makedirs(os.path.dirname(CAPA_CONFIG_PATH), exist_ok=True)
-    with open(CAPA_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(CAPA_CONFIG, f, ensure_ascii=False, indent=2)
+    _sync_capability_config_with_skills()
+    _persist_json(CAPA_CONFIG_PATH, CAPA_CONFIG)
     return {"status": "ok", **CAPA_CONFIG, "default_catalog": get_default_capability_catalog()}
 
 
@@ -1714,8 +1704,8 @@ def get_mcp_servers():
 
 
 @app.post("/mcp-servers")
-def set_mcp_servers(body: Dict[str, Any]):
-    merged = merge_mcp_settings(body)
+def set_mcp_servers(body: SetMcpServersRequest):
+    merged = merge_mcp_settings(_payload_dict(body))
     MCP_CONFIG.clear()
     MCP_CONFIG.update(merged)
     os.makedirs(os.path.dirname(MCP_CONFIG_PATH), exist_ok=True)
@@ -1730,21 +1720,21 @@ def get_skills():
 
 
 @app.post("/skills")
-def set_skills(body: Dict):
+def set_skills(body: SetSkillsRequest):
+    payload = _payload_dict(body)
     next_state = dict(SKILL_CONFIG)
     next_state.update({
-        "notes": body.get("notes", SKILL_CONFIG.get("notes", "")),
+        "notes": payload.get("notes", SKILL_CONFIG.get("notes", "")),
     })
-    if isinstance(body.get("catalog"), list):
-        next_state["catalog"] = body.get("catalog")
+    if isinstance(payload.get("catalog"), list):
+        next_state["catalog"] = payload.get("catalog")
     merged = merge_skill_settings(next_state)
     SKILL_CONFIG.clear()
     SKILL_CONFIG.update(merged)
-    os.makedirs(os.path.dirname(SKILL_CONFIG_PATH), exist_ok=True)
-    with open(SKILL_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(SKILL_CONFIG, f, ensure_ascii=False, indent=2)
+    _persist_json(SKILL_CONFIG_PATH, SKILL_CONFIG)
+    _sync_capability_config_with_skills(persist=True)
     return {"status": "ok", **SKILL_CONFIG, "default_catalog": get_default_skill_catalog()}
 
-# ---- static frontend ----
+# ---- 静态前端 ----
 static_dir = os.path.join(BASE_DIR, "frontend")
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

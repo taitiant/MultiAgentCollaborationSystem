@@ -1,3 +1,5 @@
+"""工作区清理工具，用于移除阶段产物与无主孤儿文件。"""
+
 from __future__ import annotations
 
 import os
@@ -25,12 +27,12 @@ MANAGED_ROOT_FILES = {
 
 
 def cleanup_architecture_orphan_files(task: Task, workspace_root: str, stage_name: str, stage_def: Optional[Dict[str, Any]] = None) -> int:
-    from orchestration.document_rules import (
+    from orchestration.planning.document_rules import (
         _extract_architecture_file_list,
         _infer_project_stack,
         _normalize_architecture_file_list,
     )
-    from orchestration.stage_catalog import (
+    from orchestration.planning.stage_catalog import (
         normalize_stage_type,
     )
 

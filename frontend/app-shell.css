@@ -31,7 +31,7 @@ body {
 body.app-page {
   margin: 0;
   color: var(--app-text);
-  font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   background:
     radial-gradient(circle at 16% 14%, rgba(58, 123, 213, 0.28), transparent 30%),
     radial-gradient(circle at 82% 10%, rgba(33, 166, 124, 0.18), transparent 28%),

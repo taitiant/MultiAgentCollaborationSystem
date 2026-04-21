@@ -1,4 +1,4 @@
-from orchestration.mcp_registry import expand_mcp_binding, merge_mcp_settings, resolve_mcp_server
+from orchestration.mcp.registry import expand_mcp_binding, merge_mcp_settings, resolve_mcp_server
 
 
 def test_merge_mcp_settings_accepts_claude_desktop_shape():

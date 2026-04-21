@@ -1,3 +1,5 @@
+"""Leader 规划结果的归一化处理与回退工作流规划辅助函数。"""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +9,7 @@ from typing import Any, Dict, List
 
 from core import Task
 from domains.software_dev.agents.asset_agent import needs_visual_assets
-from orchestration.stage_catalog import (
+from orchestration.planning.stage_catalog import (
     ARCHITECTURE_FILE_LIST_HINT,
     DEFAULT_ACCEPTANCE_CRITERIA,
     REFERENCE_FLOW_PRESETS,
